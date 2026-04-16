@@ -1,17 +1,20 @@
-# ai-review
+# github-workflows
 
-Shared GitHub Actions workflow for AI-powered code review across jitsucom repos.
-Uses [OpenAI Codex](https://openai.com/codex) to review pull requests and commits
-for bugs, security issues, and correctness problems.
+Shared GitHub Actions reusable workflows for jitsucom repos.
 
-## What it does
+## Workflows
+
+### `ai-review.yml` — AI Code Review
+
+Reviews pull requests and commits for bugs, security issues, and correctness problems
+using [OpenAI Codex](https://openai.com/codex).
 
 - On **pull requests**: posts a native PR review with inline comments via a GitHub App
 - On **push to main** (commits not part of any PR): posts a review as a commit comment
 - Skips commits that already belong to an open PR (reviewed there instead)
 - Reports token usage and estimated cost in the workflow summary
 
-## Secrets required
+#### Secrets required
 
 All three secrets must be available to the workflow — either as org secrets or repo secrets.
 
@@ -21,7 +24,7 @@ All three secrets must be available to the workflow — either as org secrets or
 | `AI_CODE_REVIEW_APP_ID` | PR mode | GitHub App ID for posting PR reviews |
 | `AI_CODE_REVIEW_PRIVATE_KEY` | PR mode | Private key (.pem) for the GitHub App |
 
-### GitHub App setup
+#### GitHub App setup
 
 The GitHub App needs **Pull requests: Read & write** on the target repo.
 
@@ -36,7 +39,7 @@ gh secret set AI_CODE_REVIEW_PRIVATE_KEY --org jitsucom --repos my-repo < app-pr
 gh secret set OPENAI_API_KEY --org jitsucom --repos my-repo --body "<key>"
 ```
 
-## Usage
+#### Usage
 
 Add a thin wrapper workflow to your repo:
 
@@ -60,26 +63,24 @@ on:
 
 jobs:
   ai-review:
-    uses: jitsucom/ai-review/.github/workflows/ai-review.yml@main
+    uses: jitsucom/github-workflows/.github/workflows/ai-review.yml@main
     secrets: inherit
+    with:
+      pr_number: ${{ inputs.pr_number }}
+      commit_sha: ${{ inputs.commit_sha }}
 ```
-
-### Custom review instructions
 
 Use the `review_instructions` input to focus the review on what matters for your repo:
 
 ```yaml
-jobs:
-  ai-review:
-    uses: jitsucom/ai-review/.github/workflows/ai-review.yml@main
-    secrets: inherit
     with:
+      pr_number: ${{ inputs.pr_number }}
+      commit_sha: ${{ inputs.commit_sha }}
       review_instructions: >-
         Focus on infrastructure safety, Terraform drift, and secret leaks.
         Skip style nitpicks.
 ```
 
-## Updating
+#### Updating
 
-The reusable workflow lives in this repo. All consuming repos pick up changes on the next
-run — no changes needed in each repo.
+All consuming repos pick up changes automatically on the next run — no changes needed per repo.
