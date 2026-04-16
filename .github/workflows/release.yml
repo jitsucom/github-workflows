@@ -1,0 +1,30 @@
+name: Release
+
+on:
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v5.0.0
+        with:
+          fetch-depth: 0
+
+      - name: "🏷️ Create and push tag"
+        id: tag
+        run: |
+          set -euo pipefail
+          COMMIT_COUNT=$(git rev-list --count HEAD)
+          DATE=$(date -u +%Y%m%d)
+          TAG="1.${COMMIT_COUNT}.${DATE}"
+          git tag "$TAG"
+          git push origin "$TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Created tag: $TAG"
+
+      - name: "📝 Write summary"
+        run: echo "Released tag \`${{ steps.tag.outputs.tag }}\`" >> "$GITHUB_STEP_SUMMARY"
