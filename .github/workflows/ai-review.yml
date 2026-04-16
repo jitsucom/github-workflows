@@ -8,6 +8,14 @@ on:
         description: "Custom review focus (optional). Overrides the default instructions."
         required: false
         type: string
+      pr_number:
+        description: "PR number to review (passed through from caller workflow_dispatch)."
+        required: false
+        type: string
+      commit_sha:
+        description: "Commit SHA to review (passed through from caller workflow_dispatch)."
+        required: false
+        type: string
   pull_request:
     types:
       - opened
