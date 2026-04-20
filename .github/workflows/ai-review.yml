@@ -127,6 +127,14 @@ jobs:
             fi
             COMPARE_HEAD="$RESOLVED_SHA"
             if [ "${{ github.event_name }}" = "push" ]; then
+              PARENT_COUNT=$(gh api "repos/$REPO/commits/$RESOLVED_SHA" --jq '.parents | length' 2>/dev/null || echo "1")
+              if [ "$PARENT_COUNT" -gt 1 ]; then
+                echo "review_mode=skip" >> "$GITHUB_OUTPUT"
+                echo "skip_reason=merge commit (${PARENT_COUNT} parents)" >> "$GITHUB_OUTPUT"
+                echo "subject_url=$URL" >> "$GITHUB_OUTPUT"
+                echo "target mode=skip subject=$URL range=$COMPARE_BASE..$COMPARE_HEAD skip_reason='merge commit'"
+                exit 0
+              fi
               PR_COUNT=$(gh api "repos/$REPO/commits/$RESOLVED_SHA/pulls" \
                 -H "Accept: application/vnd.github.groot-preview+json" \
                 --jq 'length' 2>/dev/null || echo "0")
