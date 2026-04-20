@@ -16,6 +16,13 @@ on:
         description: "Commit SHA to review (passed through from caller workflow_dispatch)."
         required: false
         type: string
+    secrets:
+      OPENAI_API_KEY:
+        required: true
+      AI_CODE_REVIEW_APP_ID:
+        required: false
+      AI_CODE_REVIEW_PRIVATE_KEY:
+        required: false
   pull_request:
     types:
       - opened
