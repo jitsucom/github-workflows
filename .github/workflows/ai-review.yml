@@ -221,9 +221,12 @@ jobs:
           6. Never call this review "WIP", "draft", or "preliminary".
 
           If `review_mode` is `pr`:
-          1. Post a PR review directly to GitHub (do not delegate posting to workflow wrapper logic).
-          2. Include summary and inline comments when appropriate.
-          3. If there are no meaningful issues, post a concise positive review.
+          1. Before deciding the verdict, fetch the PR's existing review threads via the GitHub API and inspect each thread's `isResolved` state and comments. Treat resolved threads as previously-handled: do not re-raise the same finding even if the underlying code still looks the same to you — the author has already given a reason and the maintainer chose to close it.
+          2. Choose the GitHub review event explicitly:
+             - Use `event=APPROVE` when no actionable issues remain — i.e. there are no unresolved review threads with valid concerns, AND the diff at HEAD has no new actionable issues. This is what unblocks branch protection on a clean re-review.
+             - Use `event=REQUEST_CHANGES` only when there is a *new* actionable issue the author has not addressed.
+             - Use `event=COMMENT` only for informational reviews that should not gate the merge.
+          3. Post the PR review directly to GitHub (do not delegate posting to workflow wrapper logic). Include a summary and inline comments when appropriate.
 
           If `review_mode` is `commit`:
           1. Write `.github/codex/output/review.md`.
