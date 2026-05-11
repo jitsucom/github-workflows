@@ -1,0 +1,57 @@
+name: Slack notify (reusable)
+
+# Thin wrapper around .github/actions/slack-notify. The composite action can't
+# read org secrets directly, so this reusable workflow pulls
+# secrets.CI_SLACK_WEBHOOK and passes it through. Two use cases:
+#
+#   1. Manual testing of the slack-notify action via the Actions tab
+#      (workflow_dispatch).
+#   2. Callers that prefer `secrets: inherit` over setting SLACK_WEBHOOK_URL
+#      at job level. Note the trade-off: each call spins up its own runner.
+#      For inline notifications inside an existing job, use the composite
+#      action directly.
+
+on:
+  workflow_call:
+    inputs:
+      header:
+        type: string
+        required: true
+      color:
+        type: string
+        required: false
+        default: "good"
+      blocks:
+        type: string
+        required: false
+        default: ""
+  workflow_dispatch:
+    inputs:
+      header:
+        type: string
+        required: true
+        default: "Test notification from slack-notify"
+      color:
+        type: string
+        required: false
+        default: "good"
+      blocks:
+        type: string
+        required: false
+        default: ""
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      # Composite action is pinned to @main — `actions/checkout` in a reusable
+      # workflow checks out the *caller's* repo, so we can't use a `./` path
+      # without an extra clone of jitsucom/github-workflows. If this wrapper
+      # ever ships in tagged releases, bump this @ref alongside the tag.
+      - uses: jitsucom/github-workflows/.github/actions/slack-notify@main
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.CI_SLACK_WEBHOOK }}
+        with:
+          header: ${{ inputs.header }}
+          color: ${{ inputs.color }}
+          blocks: ${{ inputs.blocks }}

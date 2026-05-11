@@ -3,7 +3,7 @@ description: Send a formatted notification to Slack with optional bullet blocks
 
 inputs:
   slack_webhook_url:
-    description: "Slack webhook URL. If empty, falls back to the SLACK_WEBHOOK_URL env var (set this in the job from secrets.CI_SLACK_WEBHOOK)."
+    description: "Slack webhook URL (override). Normally leave empty and set SLACK_WEBHOOK_URL env in the job from secrets.CI_SLACK_WEBHOOK; this input only takes effect if that env var is unset (useful for ad-hoc testing)."
     required: false
     default: ""
   color:
@@ -45,20 +45,21 @@ runs:
     - name: 💬 Send Slack notification
       uses: actions/github-script@v9
       env:
-        # Webhook precedence: explicit input wins, else fall back to env var
-        # (typically set at job level from secrets.CI_SLACK_WEBHOOK — composite
-        # actions can't read org secrets directly).
+        # Webhook precedence: SLACK_WEBHOOK_URL env var wins (typically set at
+        # job level from secrets.CI_SLACK_WEBHOOK — composite actions can't read
+        # org secrets directly). The `slack_webhook_url` input is a fallback for
+        # ad-hoc testing or direct invocation.
         WEBHOOK_INPUT: ${{ inputs.slack_webhook_url }}
         COLOR: ${{ inputs.color }}
         HEADER: ${{ inputs.header }}
         BLOCKS_JSON: ${{ steps.convert.outputs.blocks_json }}
       with:
         script: |
-          const webhook = process.env.WEBHOOK_INPUT || process.env.SLACK_WEBHOOK_URL;
+          const webhook = process.env.SLACK_WEBHOOK_URL || process.env.WEBHOOK_INPUT;
           if (!webhook) {
             throw new Error(
-              "slack-notify: no webhook URL. Pass `slack_webhook_url` input or " +
-              "set SLACK_WEBHOOK_URL env in the job (from secrets.CI_SLACK_WEBHOOK)."
+              "slack-notify: no webhook URL. Set SLACK_WEBHOOK_URL env in the " +
+              "job (from secrets.CI_SLACK_WEBHOOK) or pass `slack_webhook_url` input."
             );
           }
 

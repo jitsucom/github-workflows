@@ -101,26 +101,48 @@ Used by the deploy workflows.
 Inputs:
 
 - `header` — required.
-- `slack_webhook_url` — optional. If empty, falls back to the
-  `SLACK_WEBHOOK_URL` env var. The standard pattern is to set this once at the
-  job level from the org secret:
-
-  ```yaml
-  jobs:
-    notify:
-      env:
-        SLACK_WEBHOOK_URL: ${{ secrets.CI_SLACK_WEBHOOK }}
-      steps:
-        - uses: jitsucom/github-workflows/.github/actions/slack-notify@main
-          with:
-            header: "Deploy started"
-  ```
 - `color` — optional, defaults to `good` (green). Accepts `good`, `warning`,
   `danger`, or a hex color like `#36a64f`.
 - `blocks` — optional. YAML array of block objects with `title`, `value`,
   `url` (optional), `is_code` (optional). Omit to send the header alone.
+- `slack_webhook_url` — optional override. Normally leave empty; the action
+  reads `SLACK_WEBHOOK_URL` env first (see below) and only uses this input as
+  a fallback, mainly for ad-hoc testing.
+
+The composite action can't read org secrets directly. Standard pattern: set
+`SLACK_WEBHOOK_URL` once at the job level from `secrets.CI_SLACK_WEBHOOK`.
+
+```yaml
+jobs:
+  notify:
+    env:
+      SLACK_WEBHOOK_URL: ${{ secrets.CI_SLACK_WEBHOOK }}
+    steps:
+      - uses: jitsucom/github-workflows/.github/actions/slack-notify@main
+        with:
+          header: "Deploy started"
+```
 
 See [`action.yml`](.github/actions/slack-notify/action.yml).
+
+#### Reusable-workflow wrapper
+
+For callers that prefer `secrets: inherit` over wiring the env var, or for
+testing the action directly from the GitHub UI (`workflow_dispatch`), there's
+a thin wrapper at [`.github/workflows/slack-notify.yml`](.github/workflows/slack-notify.yml):
+
+```yaml
+jobs:
+  notify:
+    uses: jitsucom/github-workflows/.github/workflows/slack-notify.yml@main
+    secrets: inherit
+    with:
+      header: "Deploy started"
+```
+
+Trade-off: each invocation runs as its own job on a fresh runner (~30–60s
+startup) and can't share workspace state with sibling steps. For inline
+notifications inside an existing deploy job, use the composite action directly.
 
 ### `install-yq` — Install the yq CLI
 
