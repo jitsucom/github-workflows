@@ -1,0 +1,27 @@
+name: Install yq
+description: Install the yq CLI (mikefarah/yq) into /usr/local/bin.
+
+inputs:
+  version:
+    description: "yq version to install (e.g. v4.44.3). Default: latest."
+    required: false
+    default: latest
+
+runs:
+  using: composite
+  steps:
+    - name: Install yq
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -eu
+        if [ "$VERSION" = "latest" ]; then
+          URL="https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64"
+        else
+          URL="https://github.com/mikefarah/yq/releases/download/${VERSION}/yq_linux_amd64"
+        fi
+        curl -fsSL -o /tmp/yq "$URL"
+        chmod +x /tmp/yq
+        sudo mv /tmp/yq /usr/local/bin/yq
+        yq --version

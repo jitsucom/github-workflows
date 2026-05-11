@@ -1,0 +1,32 @@
+name: Install kustomize
+description: Install the standalone kustomize CLI with a pinned version + sha256 checksum.
+
+inputs:
+  version:
+    description: "kustomize version (without leading 'v'), e.g. 5.8.1."
+    required: false
+    default: "5.8.1"
+  sha256:
+    description: "Expected sha256 of the linux_amd64 tarball. Lookup at https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv<version>/checksums.txt"
+    required: false
+    default: "029a7f0f4e1932c52a0476cf02a0fd855c0bb85694b82c338fc648dcb53a819d"
+
+runs:
+  using: composite
+  steps:
+    - name: Install kustomize
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        SHA256: ${{ inputs.sha256 }}
+      run: |
+        set -eu
+        # Pinned + checksum-verified so a compromised installer script can't
+        # silently swap the binary.
+        URL="https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv${VERSION}/kustomize_v${VERSION}_linux_amd64.tar.gz"
+        curl -fsSL -o /tmp/kustomize.tgz "$URL"
+        echo "${SHA256}  /tmp/kustomize.tgz" | sha256sum -c -
+        tar -xzf /tmp/kustomize.tgz -C /tmp kustomize
+        sudo install -m 0755 /tmp/kustomize /usr/local/bin/kustomize
+        rm -f /tmp/kustomize.tgz /tmp/kustomize
+        kustomize version

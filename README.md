@@ -84,3 +84,29 @@ Use the `review_instructions` input to focus the review on what matters for your
 #### Updating
 
 All consuming repos pick up changes automatically on the next run — no changes needed per repo.
+
+## Composite actions
+
+Reusable composite actions live under `.github/actions/`. Consume them by path:
+
+```yaml
+- uses: jitsucom/github-workflows/.github/actions/<name>@<tag-or-main>
+```
+
+### `slack-notify` — Slack webhook notification
+
+Sends a formatted notification to Slack with title + bullet blocks. Used by the
+deploy workflows. Inputs: `slack_webhook_url`, `color`, `header`, `blocks`
+(YAML array). See [`action.yml`](.github/actions/slack-notify/action.yml).
+
+### `install-yq` — Install the yq CLI
+
+Installs `mikefarah/yq` to `/usr/local/bin`. Inputs: `version` (defaults to
+`latest`). See [`action.yml`](.github/actions/install-yq/action.yml).
+
+### `install-kustomize` — Install the kustomize CLI
+
+Installs the standalone kustomize CLI with a pinned version + sha256 checksum.
+Inputs: `version`, `sha256` (both have safe defaults). See
+[`action.yml`](.github/actions/install-kustomize/action.yml).
+
