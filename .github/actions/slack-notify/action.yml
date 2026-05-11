@@ -23,8 +23,15 @@ runs:
       shell: bash
       env:
         BLOCKS_YAML: ${{ inputs.blocks }}
+        YQ_VERSION: "4.53.2"
+        YQ_SHA256: "d56bf5c6819e8e696340c312bd70f849dc1678a7cda9c2ad63eebd906371d56b"
       run: |
-        wget -qO /tmp/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+        set -eu
+        # Pinned + checksum-verified yq install. Keep in sync with .github/actions/install-yq
+        # (we inline here so this action stays self-contained for external callers).
+        URL="https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64"
+        curl -fsSL -o /tmp/yq "$URL"
+        echo "${YQ_SHA256}  /tmp/yq" | sha256sum -c -
         chmod +x /tmp/yq
         BLOCKS_JSON=$(/tmp/yq -o=json '.' <<< "$BLOCKS_YAML")
         echo "blocks_json<<EOF" >> $GITHUB_OUTPUT

@@ -101,8 +101,9 @@ deploy workflows. Inputs: `slack_webhook_url`, `color`, `header`, `blocks`
 
 ### `install-yq` — Install the yq CLI
 
-Installs `mikefarah/yq` to `/usr/local/bin`. Inputs: `version` (defaults to
-`latest`). See [`action.yml`](.github/actions/install-yq/action.yml).
+Installs `mikefarah/yq` to `/usr/local/bin` with a pinned version + sha256
+checksum. Inputs: `version`, `sha256` (both have safe defaults). See
+[`action.yml`](.github/actions/install-yq/action.yml).
 
 ### `install-kustomize` — Install the kustomize CLI
 
