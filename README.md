@@ -95,9 +95,32 @@ Reusable composite actions live under `.github/actions/`. Consume them by path:
 
 ### `slack-notify` — Slack webhook notification
 
-Sends a formatted notification to Slack with title + bullet blocks. Used by the
-deploy workflows. Inputs: `slack_webhook_url`, `color`, `header`, `blocks`
-(YAML array). See [`action.yml`](.github/actions/slack-notify/action.yml).
+Sends a formatted notification to Slack with title + optional bullet blocks.
+Used by the deploy workflows.
+
+Inputs:
+
+- `header` — required.
+- `slack_webhook_url` — optional. If empty, falls back to the
+  `SLACK_WEBHOOK_URL` env var. The standard pattern is to set this once at the
+  job level from the org secret:
+
+  ```yaml
+  jobs:
+    notify:
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.CI_SLACK_WEBHOOK }}
+      steps:
+        - uses: jitsucom/github-workflows/.github/actions/slack-notify@main
+          with:
+            header: "Deploy started"
+  ```
+- `color` — optional, defaults to `good` (green). Accepts `good`, `warning`,
+  `danger`, or a hex color like `#36a64f`.
+- `blocks` — optional. YAML array of block objects with `title`, `value`,
+  `url` (optional), `is_code` (optional). Omit to send the header alone.
+
+See [`action.yml`](.github/actions/slack-notify/action.yml).
 
 ### `install-yq` — Install the yq CLI
 
