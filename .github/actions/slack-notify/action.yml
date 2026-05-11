@@ -1,0 +1,118 @@
+name: Send Slack Notification
+description: Send a formatted notification to Slack with optional bullet blocks
+
+inputs:
+  slack_webhook_url:
+    description: "Slack webhook URL (override). Normally leave empty and set SLACK_WEBHOOK_URL env in the job from secrets.CI_SLACK_WEBHOOK; this input only takes effect if that env var is unset (useful for ad-hoc testing)."
+    required: false
+    default: ""
+  color:
+    description: "Attachment color: good, warning, danger, or hex (e.g. #36a64f)."
+    required: false
+    default: "good"
+  header:
+    description: "Header text for the notification (required)."
+    required: true
+  blocks:
+    description: "YAML array of block objects with title, value, url (optional), is_code (optional). Omit to send the header alone."
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: 🔄 Convert YAML to JSON
+      id: convert
+      if: ${{ inputs.blocks != '' }}
+      shell: bash
+      env:
+        BLOCKS_YAML: ${{ inputs.blocks }}
+        YQ_VERSION: "4.53.2"
+        YQ_SHA256: "d56bf5c6819e8e696340c312bd70f849dc1678a7cda9c2ad63eebd906371d56b"
+      run: |
+        set -eu
+        # Pinned + checksum-verified yq install. Keep in sync with .github/actions/install-yq
+        # (we inline here so this action stays self-contained for external callers).
+        URL="https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64"
+        curl -fsSL -o /tmp/yq "$URL"
+        echo "${YQ_SHA256}  /tmp/yq" | sha256sum -c -
+        chmod +x /tmp/yq
+        BLOCKS_JSON=$(/tmp/yq -o=json '.' <<< "$BLOCKS_YAML")
+        echo "blocks_json<<EOF" >> $GITHUB_OUTPUT
+        echo "$BLOCKS_JSON" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
+    - name: 💬 Send Slack notification
+      uses: actions/github-script@v9
+      env:
+        # Webhook precedence: SLACK_WEBHOOK_URL env var wins (typically set at
+        # job level from secrets.CI_SLACK_WEBHOOK — composite actions can't read
+        # org secrets directly). The `slack_webhook_url` input is a fallback for
+        # ad-hoc testing or direct invocation.
+        WEBHOOK_INPUT: ${{ inputs.slack_webhook_url }}
+        COLOR: ${{ inputs.color }}
+        HEADER: ${{ inputs.header }}
+        BLOCKS_JSON: ${{ steps.convert.outputs.blocks_json }}
+      with:
+        script: |
+          const webhook = process.env.SLACK_WEBHOOK_URL || process.env.WEBHOOK_INPUT;
+          if (!webhook) {
+            throw new Error(
+              "slack-notify: no webhook URL. Set SLACK_WEBHOOK_URL env in the " +
+              "job (from secrets.CI_SLACK_WEBHOOK) or pass `slack_webhook_url` input."
+            );
+          }
+
+          const blocksJson = process.env.BLOCKS_JSON;
+          const blocks = blocksJson ? JSON.parse(blocksJson) : [];
+
+          // Build single text with all blocks as bullet points
+          const lines = blocks.map(block => {
+            let line = `• *${block.title}:* `;
+
+            if (block.is_code) {
+              line += `\n\`\`\`${block.value}\`\`\``;
+            } else if (block.url) {
+              line += `<${block.url}|${block.value}>`;
+            } else {
+              line += block.value;
+            }
+
+            return line;
+          });
+
+          const text = lines.join('\n');
+
+          // Build complete payload. `text` (top-level) and `fallback` (attachment) drive
+          // Slack's notification preview / link-unfurl summary; without them the unfurl
+          // shows "[no preview available]". Top-level `text` also renders above the
+          // attachment, so we drop the in-attachment header block to avoid duplication.
+          const attachment = {
+            color: process.env.COLOR,
+            fallback: process.env.HEADER,
+          };
+          if (text) {
+            attachment.blocks = [
+              { type: "section", text: { type: "mrkdwn", text: text } }
+            ];
+          }
+          const payload = {
+            text: process.env.HEADER,
+            attachments: [attachment],
+          };
+
+          // Send to Slack
+          const response = await fetch(webhook, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+          });
+
+          if (!response.ok) {
+            const text = await response.text();
+            throw new Error(`Slack webhook failed: ${response.statusText} - ${text}`);
+          }
+
+          console.log('✅ Slack notification sent successfully');

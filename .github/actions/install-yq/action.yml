@@ -1,0 +1,30 @@
+name: Install yq
+description: Install the yq CLI (mikefarah/yq) with a pinned version + sha256 checksum.
+
+inputs:
+  version:
+    description: "yq version (without leading 'v'), e.g. 4.53.2."
+    required: false
+    default: "4.53.2"
+  sha256:
+    description: "Expected sha256 of the linux_amd64 binary. Lookup at https://github.com/mikefarah/yq/releases/download/v<version>/checksums (SHA-256 row — see checksums_hashes_order)."
+    required: false
+    default: "d56bf5c6819e8e696340c312bd70f849dc1678a7cda9c2ad63eebd906371d56b"
+
+runs:
+  using: composite
+  steps:
+    - name: Install yq
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        SHA256: ${{ inputs.sha256 }}
+      run: |
+        set -eu
+        # Pinned + checksum-verified so a compromised release can't silently swap the binary.
+        URL="https://github.com/mikefarah/yq/releases/download/v${VERSION}/yq_linux_amd64"
+        curl -fsSL -o /tmp/yq "$URL"
+        echo "${SHA256}  /tmp/yq" | sha256sum -c -
+        sudo install -m 0755 /tmp/yq /usr/local/bin/yq
+        rm -f /tmp/yq
+        yq --version
