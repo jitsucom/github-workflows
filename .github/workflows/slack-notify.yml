@@ -1,15 +1,20 @@
 name: Slack notify (reusable)
 
-# Thin wrapper around .github/actions/slack-notify. The composite action can't
-# read org secrets directly, so this reusable workflow pulls
-# secrets.CI_SLACK_WEBHOOK and passes it through. Two use cases:
+# Thin wrapper around .github/actions/slack-notify. Reusable workflows can read
+# org secrets directly, so this wrapper is the natural way to call the action
+# without forcing every caller to wire DEPLOY_BOT_SLACK_TOKEN / CI_SLACK_WEBHOOK
+# at the job level.
 #
+# Defaults to the bot-token path (chat.postMessage), which returns ts so callers
+# can thread or edit later. Webhook path stays as a fallback when no bot token
+# is provisioned.
+#
+# Use cases:
 #   1. Manual testing of the slack-notify action via the Actions tab
 #      (workflow_dispatch).
-#   2. Callers that prefer `secrets: inherit` over setting SLACK_WEBHOOK_URL
-#      at job level. Note the trade-off: each call spins up its own runner.
-#      For inline notifications inside an existing job, use the composite
-#      action directly.
+#   2. Callers that prefer `secrets: inherit` over wiring secrets at job level.
+#      Note the trade-off: each call spins up its own runner. For inline
+#      notifications inside an existing job, use the composite action directly.
 
 on:
   workflow_call:
@@ -25,6 +30,28 @@ on:
         type: string
         required: false
         default: ""
+      channel:
+        description: "Channel name or ID. Required for bot-token path."
+        type: string
+        required: false
+        default: ""
+      thread_ts:
+        description: "If set, post as a reply to this message ts."
+        type: string
+        required: false
+        default: ""
+      update_ts:
+        description: "If set, edit the message with this ts instead of posting a new one."
+        type: string
+        required: false
+        default: ""
+    outputs:
+      ts:
+        description: "Timestamp of the posted (or updated) message. Empty on webhook path."
+        value: ${{ jobs.send.outputs.ts }}
+      channel:
+        description: "Resolved channel ID. Empty on webhook path."
+        value: ${{ jobs.send.outputs.channel }}
   workflow_dispatch:
     inputs:
       header:
@@ -39,19 +66,38 @@ on:
         type: string
         required: false
         default: ""
+      channel:
+        type: string
+        required: false
+        default: "#dev"
+      thread_ts:
+        type: string
+        required: false
+        default: ""
+      update_ts:
+        type: string
+        required: false
+        default: ""
 
 jobs:
   send:
     runs-on: ubuntu-latest
+    outputs:
+      ts: ${{ steps.notify.outputs.ts }}
+      channel: ${{ steps.notify.outputs.channel }}
     steps:
-      # Composite action is pinned to @main — `actions/checkout` in a reusable
-      # workflow checks out the *caller's* repo, so we can't use a `./` path
-      # without an extra clone of jitsucom/github-workflows. If this wrapper
-      # ever ships in tagged releases, bump this @ref alongside the tag.
-      - uses: jitsucom/github-workflows/.github/actions/slack-notify@main
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.CI_SLACK_WEBHOOK }}
+      # Composite action ref note: a reusable workflow can't easily resolve
+      # "the ref this workflow file was loaded from", so we pin the composite
+      # action to @main. Bump in tandem when cutting tagged releases.
+      - name: 💬 Send Slack notification
+        id: notify
+        uses: jitsucom/github-workflows/.github/actions/slack-notify@main
         with:
+          bot_token: ${{ secrets.DEPLOY_BOT_SLACK_TOKEN }}
+          channel: ${{ inputs.channel }}
+          thread_ts: ${{ inputs.thread_ts }}
+          update_ts: ${{ inputs.update_ts }}
+          slack_webhook_url: ${{ secrets.CI_SLACK_WEBHOOK }}
           header: ${{ inputs.header }}
           color: ${{ inputs.color }}
           blocks: ${{ inputs.blocks }}
