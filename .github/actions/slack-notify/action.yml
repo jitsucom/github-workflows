@@ -46,7 +46,7 @@ inputs:
     description: "Header text for the notification (required)."
     required: true
   blocks:
-    description: "YAML array of block objects with title, value, url (optional), is_code (optional). Omit to send the header alone."
+    description: "YAML array of block objects with title, value, url (optional), is_code (optional). Rows whose `value` is empty or null are skipped — callers can conditionally include rows by letting an expression resolve to ''. Omit `blocks` entirely to send the header alone."
     required: false
     default: ""
 
@@ -100,7 +100,18 @@ runs:
       with:
         script: |
           const blocksJson = process.env.BLOCKS_JSON;
-          const blockList = blocksJson ? JSON.parse(blocksJson) : [];
+          const rawBlocks = blocksJson ? JSON.parse(blocksJson) : [];
+          // Skip rows whose value is missing or empty. Lets callers
+          // conditionally include rows by resolving the value to ''
+          // instead of building the YAML in a shell step. Covers
+          // undefined (key absent), null (bare `value:`), '' and
+          // whitespace-only strings.
+          const blockList = rawBlocks.filter(b => {
+            if (b === null || b === undefined) return false;
+            const v = b.value;
+            if (v === undefined || v === null) return false;
+            return String(v).trim() !== '';
+          });
 
           // Build single text with all blocks as bullet points
           const lines = blockList.map(block => {
