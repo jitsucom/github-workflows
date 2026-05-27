@@ -222,15 +222,12 @@ jobs:
 
           If `review_mode` is `pr`:
           1. Before deciding the verdict, fetch the PR's existing review threads via the GitHub API and inspect each thread's `isResolved` state and comments. Treat resolved threads as previously-handled: do not re-raise the same finding even if the underlying code still looks the same to you — the author has already given a reason and the maintainer chose to close it.
-          2. Classify every finding by severity before picking a verdict:
-             - **Critical** — the diff introduces a real bug that breaks correctness, a security vulnerability, data loss, or a user-visible regression. You must be able to point to the exact failing code path and state the concrete impact. If you cannot, or you are not confident the issue is real, it is NOT critical.
-             - **Non-critical** — everything else: edge-case concerns, possible improvements, defensive suggestions, questions, anything you are unsure about, and anything style-adjacent.
-          3. Choose the GitHub review event. Default to the least-blocking event that fits:
-             - `event=REQUEST_CHANGES` — use ONLY when there is at least one *new* *critical* issue the author has not addressed. Never request changes for non-critical findings, uncertain findings, or suggestions, no matter how many there are.
-             - `event=COMMENT` — use when you have findings but none are critical. Post the findings as inline comments so the author sees them; this does not gate the merge.
-             - `event=APPROVE` — use when no actionable issues remain (no unresolved threads with valid concerns and no new actionable issues at HEAD). Also use APPROVE — not COMMENT — when a previous review from this app requested changes, those critical issues are now resolved, and only non-critical findings remain; APPROVE is what clears the block on a re-review. Attach any remaining non-critical findings as inline comments.
-          4. When you are unsure whether a finding is critical, or unsure whether it is a real issue at all, treat it as non-critical. Blocking a merge is reserved for issues you are certain are real and critical.
-          5. Post the PR review directly to GitHub (do not delegate posting to workflow wrapper logic). Include a summary and inline comments when appropriate. In the summary, state the severity of what you found so a reader understands why the merge is or is not blocked.
+          2. Choose the GitHub review event from these two options only:
+             - `event=COMMENT` — use when you have any findings worth surfacing. Post them as inline comments so the author sees them. The repo's branch protection requires every review thread to be resolved before merge, so a comment is sufficient to block a careless merge without using REQUEST_CHANGES.
+             - `event=APPROVE` — use only when there are no actionable findings at all (no new issues at HEAD and no unresolved threads with valid concerns).
+          3. Never post `event=REQUEST_CHANGES`. Even for issues you believe are critical bugs, security problems, or regressions, post them as inline COMMENT findings — say plainly in the comment that it looks like a bug and why. Do not invent a severity verdict in the summary.
+          4. When you are unsure whether a finding is a real issue, still prefer to post it as a comment phrased as a question rather than skipping it. The author can resolve the thread if it does not apply.
+          5. Post the PR review directly to GitHub (do not delegate posting to workflow wrapper logic). Include a short summary and inline comments. The summary should describe what you looked at and list the findings briefly — do not frame it as "blocking" or "approving the merge".
 
           If `review_mode` is `commit`:
           1. Write `.github/codex/output/review.md`.
