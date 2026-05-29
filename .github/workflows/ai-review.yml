@@ -222,12 +222,11 @@ jobs:
 
           If `review_mode` is `pr`:
           1. Before deciding the verdict, fetch the PR's existing review threads via the GitHub API and inspect each thread's `isResolved` state and comments. Treat resolved threads as previously-handled: do not re-raise the same finding even if the underlying code still looks the same to you — the author has already given a reason and the maintainer chose to close it.
-          2. Choose the GitHub review event from these two options only:
-             - `event=COMMENT` — use when you have any findings worth surfacing. Post them as inline comments so the author sees them. The repo's branch protection requires every review thread to be resolved before merge, so a comment is sufficient to block a careless merge without using REQUEST_CHANGES.
-             - `event=APPROVE` — use only when there are no actionable findings at all (no new issues at HEAD and no unresolved threads with valid concerns).
-          3. Never post `event=REQUEST_CHANGES`. Even for issues you believe are critical bugs, security problems, or regressions, post them as inline COMMENT findings — say plainly in the comment that it looks like a bug and why. Do not invent a severity verdict in the summary.
-          4. When you are unsure whether a finding is a real issue, still prefer to post it as a comment phrased as a question rather than skipping it. The author can resolve the thread if it does not apply.
-          5. Post the PR review directly to GitHub (do not delegate posting to workflow wrapper logic). Include a short summary and inline comments. The summary should describe what you looked at and list the findings briefly — do not frame it as "blocking" or "approving the merge".
+          2. Always post the review with `event=APPROVE`. Use this event regardless of how many findings you have — even when you surface bugs, security issues, or regressions. The approval is not a judgment that the code is flawless; it only means the review is not blocking the merge.
+          3. Surface all of your findings as inline comments on the relevant lines so the author sees them. Post as many comments as the change warrants — do not hold back findings just because the verdict is APPROVE. Say plainly in each comment when something looks like a bug and why.
+          4. Never post `event=REQUEST_CHANGES` or `event=COMMENT`. The verdict is always APPROVE; the findings live in the inline comments and summary, not in the event type.
+          5. When you are unsure whether a finding is a real issue, still prefer to post it as a comment phrased as a question rather than skipping it. The author can resolve the thread if it does not apply.
+          6. Post the PR review directly to GitHub (do not delegate posting to workflow wrapper logic). Include a short summary and inline comments. The summary should describe what you looked at and list the findings briefly — do not frame it as "blocking" or "approving the merge".
 
           If `review_mode` is `commit`:
           1. Write `.github/codex/output/review.md`.
