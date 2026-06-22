@@ -295,6 +295,13 @@ jobs:
           effort: high
           codex-home: .github/codex/home
           sandbox: danger-full-access
+          # Allow reviews on PRs opened by github-actions[bot] (e.g. the
+          # automated security-fix PRs). codex-action's write-access check
+          # queries the collaborators API, which returns 'none' for the bot
+          # actor and aborts the run. allow-bots whitelists the GitHub-owned
+          # github-actions[bot] specifically — it runs under the repo's own
+          # token, so it is repo-internal automation, not an external actor.
+          allow-bots: true
 
       - name: "✅ Validate review output"
         if: ${{ steps.resolve-target.outputs.review_mode == 'commit' }}
