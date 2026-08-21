@@ -286,13 +286,22 @@ jobs:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ steps.resolve-target.outputs.pr_number }}
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-        uses: openai/codex-action@v1
+        # Pinned to the v1.11 commit, not the floating v1 tag: v1.12 (2026-08-20)
+        # rewrote the Linux launch path and the step never returns after a heavy
+        # turn — every caller's review died on the job timeout with the result
+        # already on disk and no logs uploaded (openai/codex-action#150).
+        # Bump deliberately once upstream ships a fix.
+        uses: openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56 # v1.11
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           prompt-file: .github/workflows/ai-review.prompt.md
           output-file: .github/codex/output/codex-final-message.md
           model: gpt-5.3-codex
           effort: high
+          # the CLI floated to npm latest too; pinned to the release verified
+          # clean with v1.11 so a CLI release can't change review behaviour
+          # under us either
+          codex-version: 0.149.0
           codex-home: .github/codex/home
           sandbox: danger-full-access
           # Allow reviews on PRs opened by github-actions[bot] (e.g. the
