@@ -28,5 +28,18 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "Created tag: $TAG"
 
+      # `current` is a moving tag that always points at the latest release on
+      # main. Consumers reference `ai-review.yml@current` so they pick up new
+      # releases without a per-repo re-pin. To roll back every consumer at
+      # once, move the tag by hand to an older release:
+      #   git tag -f current 1.30.20260821 && git push -f origin current
+      # (the next merge to main moves it forward again).
+      - name: "🏷️ Move `current` tag"
+        run: |
+          set -euo pipefail
+          git tag -f current
+          git push -f origin current
+          echo "Moved tag: current -> $(git rev-parse --short HEAD)"
+
       - name: "📝 Write summary"
-        run: echo "Released tag \`${{ steps.tag.outputs.tag }}\`" >> "$GITHUB_STEP_SUMMARY"
+        run: echo "Released tag \`${{ steps.tag.outputs.tag }}\` (\`current\` now points here)" >> "$GITHUB_STEP_SUMMARY"
