@@ -16,17 +16,26 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: "🏷️ Create and push tag"
+      # The repo has "immutable releases" enabled, so publishing a release
+      # locks its tag to this commit: it can't be moved or deleted while the
+      # release exists, and the tag name can never be reused. Consumers that
+      # pin `@<tag>` therefore get SHA-pin guarantees. A bare tag is NOT
+      # protected — only tags attached to a published release are — so the
+      # tag is created BY the release (--target) rather than pushed first:
+      # there is never a window with an unprotected tag on origin.
+      - name: "🏷️ Publish immutable release"
         id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           COMMIT_COUNT=$(git rev-list --count HEAD)
           DATE=$(date -u +%Y%m%d)
           TAG="1.${COMMIT_COUNT}.${DATE}"
-          git tag "$TAG"
-          git push origin "$TAG"
+          gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" \
+            --notes "$(git log -1 --pretty=%s)"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "Created tag: $TAG"
+          echo "Released $TAG at $GITHUB_SHA"
 
       - name: "📝 Write summary"
         run: echo "Released tag \`${{ steps.tag.outputs.tag }}\`" >> "$GITHUB_STEP_SUMMARY"

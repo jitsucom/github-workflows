@@ -83,10 +83,12 @@ Use the `review_instructions` input to focus the review on what matters for your
 
 #### Versioning
 
-Every merge to `main` is tagged `1.<commit-count>.<yyyymmdd>` by
-[`release.yml`](.github/workflows/release.yml). Consuming repos pin a release tag and bump
-it deliberately — there is no floating tag, so a github-workflows release never changes a
-consumer's review behaviour until that repo opts in.
+Every merge to `main` is tagged `1.<commit-count>.<yyyymmdd>` and published as a GitHub
+release by [`release.yml`](.github/workflows/release.yml). The repo has **immutable
+releases** enabled, so a released tag can't be moved or deleted and its name can never be
+reused — pinning `@<tag>` is as strong as pinning a SHA. Consuming repos pin a release tag
+and bump it deliberately; there is no floating tag, so a github-workflows release never
+changes a consumer's review behaviour until that repo opts in.
 
 ## Composite actions
 
