@@ -63,7 +63,7 @@ on:
 
 jobs:
   ai-review:
-    uses: jitsucom/github-workflows/.github/workflows/ai-review.yml@current
+    uses: jitsucom/github-workflows/.github/workflows/ai-review.yml@1.32.20260826
     secrets: inherit
     with:
       pr_number: ${{ inputs.pr_number }}
@@ -84,19 +84,9 @@ Use the `review_instructions` input to focus the review on what matters for your
 #### Versioning
 
 Every merge to `main` is tagged `1.<commit-count>.<yyyymmdd>` by
-[`release.yml`](.github/workflows/release.yml), which also moves the `current` tag to the
-same commit.
-
-- `@current` (recommended) — consuming repos pick up each release automatically on the
-  next run; no per-repo re-pin.
-- `@1.30.20260821` — pin a specific release if a repo needs to opt out of updates.
-
-To roll back **all** `@current` consumers at once, move the tag to an older release
-(the next merge to `main` moves it forward again):
-
-```sh
-git tag -f current 1.30.20260821 && git push -f origin current
-```
+[`release.yml`](.github/workflows/release.yml). Consuming repos pin a release tag and bump
+it deliberately — there is no floating tag, so a github-workflows release never changes a
+consumer's review behaviour until that repo opts in.
 
 ## Composite actions
 
