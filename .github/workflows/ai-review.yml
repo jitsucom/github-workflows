@@ -296,7 +296,7 @@ jobs:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           prompt-file: .github/workflows/ai-review.prompt.md
           output-file: .github/codex/output/codex-final-message.md
-          model: gpt-5.3-codex
+          model: gpt-5.6-terra
           effort: high
           # the CLI floated to npm latest too; pinned to the release verified
           # clean with v1.11 so a CLI release can't change review behaviour
@@ -325,17 +325,17 @@ jobs:
         id: estimate-cost
         env:
           CODEX_HOME: .github/codex/home
-          MODEL: gpt-5.3-codex
+          MODEL: gpt-5.6-terra
           # Standard text-token rates per 1M tokens, sourced from:
-          # https://developers.openai.com/api/docs/models/gpt-5.3-codex
-          PRICE_INPUT_PER_M: "1.75"
-          PRICE_CACHED_INPUT_PER_M: "0.175"
-          PRICE_OUTPUT_PER_M: "14.0"
+          # https://developers.openai.com/api/docs/models/gpt-5.6-terra
+          PRICE_INPUT_PER_M: "2.0"
+          PRICE_CACHED_INPUT_PER_M: "0.2"
+          PRICE_OUTPUT_PER_M: "12.0"
         run: |
           set -euo pipefail
 
           echo "model=$MODEL" >> "$GITHUB_OUTPUT"
-          echo "price_source=https://developers.openai.com/api/docs/models/gpt-5.3-codex" >> "$GITHUB_OUTPUT"
+          echo "price_source=https://developers.openai.com/api/docs/models/gpt-5.6-terra" >> "$GITHUB_OUTPUT"
 
           SESSION_FILE=$(find "$CODEX_HOME" -type f -name '*.jsonl' -print 2>/dev/null | xargs ls -t 2>/dev/null | head -n1 || true)
           if [ -z "$SESSION_FILE" ]; then
