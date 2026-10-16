@@ -72,7 +72,7 @@ else:
                    COMPARE_BASE=self.base if mode == 'pr' else self.common,
                    COMPARE_HEAD=self.head, SUBJECT_URL='https://example.com/pr/7',
                    REVIEW_INSTRUCTIONS='Focus on routing.\nDo not invent requirements.',
-                   REPO='owner/repo', **extra)
+                   REPO='owner/repo', GITHUB_OUTPUT=str(self.path / 'outputs'), **extra)
         return subprocess.run(['bash', '-e', '-c', run_block('🧾 Prepare review context')],
                               cwd=self.repo, env=env, capture_output=True, text=True)
 
