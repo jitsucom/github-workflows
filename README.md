@@ -199,10 +199,26 @@ gh workflow run ai-review.yml --repo jitsucom/github-workflows --ref <candidate-
 ```
 
 For reusable callers, pass the same inputs under `with:`. Primary token usage is collected
-before the native benchmark. Cost estimation currently has rates only for Terra; the
-Astra default records usage counts without an estimated cost until its pricing is configured.
-No runtime or model default changes are implied by a successful benchmark. Evaluate confirmed findings, false positives,
-runtime and usage across representative PRs before adopting a new default.
+before the native benchmark. The workflow's `PRICES` dictionary contains standard text-token
+rates for all 47 models in the official flagship, legacy text, cyber, life sciences, and
+specialized text pricing tables, verified on 2026-10-16. This includes Astra, Sol 6.1,
+Sol 6, Luna 6, the 5.6 family, and GPT-5.3-Codex. A price entry does not imply that a model
+supports the Codex review command; model compatibility still needs to be checked separately.
+
+Estimates use cumulative usage deltas per request, charge cached reads and cache writes
+separately, and apply the published long-context premium above 272,000 input tokens per
+request. Repeated token-count events do not add cost. Reasoning tokens are already included
+in output tokens. Unknown model identifiers, inconsistent counters, or unpriced token
+categories retain usage but show cost as unavailable with a reason. Exact identifiers are
+required; arbitrary snapshot suffixes are not assigned alias prices.
+
+Rates and their verification date come from [OpenAI pricing](https://developers.openai.com/api/docs/pricing).
+Estimates exclude tool charges, regional/service-tier uplifts, and the optional native
+benchmark. The source, date, basis, cache-write usage, and any unavailable reason are saved
+in `analysis-status.json`. Update the inline dictionary when published pricing changes.
+No runtime or model default changes are implied by a successful benchmark. Evaluate
+confirmed findings, false positives, runtime and usage across representative PRs before
+adopting a new default.
 
 #### Versioning
 

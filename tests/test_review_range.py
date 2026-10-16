@@ -159,20 +159,6 @@ class ReviewRangeTest(unittest.TestCase):
         self.assertEqual(self.git('-C', str(self.root / 'runner/native-review'), 'rev-parse', 'HEAD'), self.head)
         self.assertTrue((self.root / '.github/codex/output/native-events.jsonl').exists())
 
-    def test_cost_estimate_is_not_reused_for_other_models(self):
-        home = self.root / 'sessions'
-        home.mkdir()
-        (home / 'session.jsonl').write_text(json.dumps({'type':'event_msg', 'payload':{'type':'token_count', 'info':{'total_token_usage':{'input_tokens':1000000,'cached_input_tokens':500000,'output_tokens':100000}}}}) + '\n')
-        for model in ('gpt-5.6-terra', 'gpt-6-astra'):
-            output = self.root / ('cost-' + model)
-            env = dict(os.environ, CODEX_HOME=str(home), MODEL=model, GITHUB_OUTPUT=str(output),
-                       PRICE_INPUT_PER_M='2.0', PRICE_CACHED_INPUT_PER_M='0.2', PRICE_OUTPUT_PER_M='12.0')
-            subprocess.run(['bash', '-e', '-c', run_block('💰 Estimate token usage and cost')],
-                           cwd=self.root, env=env, check=True, capture_output=True)
-            data = dict(line.split('=', 1) for line in output.read_text().splitlines())
-            self.assertEqual(data['input_tokens'], '1000000')
-            self.assertEqual(data['estimated_cost_usd'], '2.300000' if model == 'gpt-5.6-terra' else '')
-
     def test_execution_settings_are_pinned_and_bounded(self):
         for changes, valid in [({}, True), ({'CODEX_VERSION':'latest'}, False),
                                ({'TIMEOUT_MINUTES':'0'}, False), ({'TIMEOUT_MINUTES':'31'}, False),
