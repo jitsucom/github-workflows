@@ -388,7 +388,10 @@ jobs:
 
           def select_range(reviews, head, full_base, profile, bot, ancestor):
               for review in reversed(reviews):
-                  if (review.get('user') or {}).get('login') != bot or review.get('state') != 'APPROVED':
+                  # A push can dismiss an approval without undoing completed analysis.
+                  # Coverage comes from the validated publisher marker, not merge approval.
+                  if ((review.get('user') or {}).get('login') != bot
+                          or review.get('state') not in ('APPROVED', 'DISMISSED')):
                       continue
                   for raw in re.findall(r'<!-- ai-review-coverage:(.*?) -->', review.get('body') or ''):
                       try:
