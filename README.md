@@ -150,7 +150,12 @@ The model, reasoning effort, and CLI/action pins remain unchanged by this separa
 #### Incremental review and execution controls
 
 The publisher records an `ai-review-coverage` marker only after a validated review is
-posted. An APPROVE verdict without that marker does not count as coverage. A follow-up
+posted. An APPROVE verdict without that marker does not count as coverage. Both
+`APPROVED` and `DISMISSED` reviews from the trusted bot can supply coverage: dismissing
+an approval (including automatic stale-review dismissal on push) preserves the record
+of completed analysis. Coverage does not require a currently valid merge approval.
+All marker, reviewed-SHA, profile, merge-base, and ancestry checks still apply. Use
+`incremental: false` to request a full review regardless of prior coverage. A follow-up
 PR review starts at the last compatible reviewed SHA when it is an ancestor of the
 current head and the full PR merge base is unchanged. First reviews, rebases, force
 pushes, base changes, and incompatible settings fall back to the full PR diff. Same-head

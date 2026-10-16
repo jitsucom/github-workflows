@@ -90,14 +90,25 @@ class ReviewRangeTest(unittest.TestCase):
         self.assertEqual((self.root / '.github/codex/output/diff-files.txt').read_text(), 'fixup.txt\n')
         self.assertEqual(json.loads((self.root / '.github/codex/output/range.json').read_text()), info)
 
+    def test_dismissed_completed_review_remains_coverage(self):
+        info = self.select()
+        # GitHub dismisses a stale approval on push, preserving its completion marker.
+        self.reviews = [self.coverage(info, head=self.base),
+                        dict(self.coverage(info), state='DISMISSED')]
+        info = self.select()
+        self.assertEqual(info['range_kind'], 'incremental')
+        self.assertEqual(info['compare_base'], self.previous)
+        self.assertEqual((self.root / '.github/codex/output/diff-files.txt').read_text(), 'fixup.txt\n')
+
     def test_force_push_and_changed_base_fall_back_to_full(self):
         info = self.select()
         self.git('checkout', '-b', 'rewritten', self.base)
         rewritten = self.commit('rewritten.txt')
-        self.reviews = [self.coverage(info, head=rewritten)]
-        self.assertEqual(self.select()['range_kind'], 'full')
-        self.reviews = [self.coverage(info, base=rewritten)]
-        self.assertEqual(self.select()['range_kind'], 'full')
+        for state in ('APPROVED', 'DISMISSED'):
+            for changes in (dict(head=rewritten), dict(base=rewritten), dict(head=self.head)):
+                with self.subTest(state=state, changes=changes):
+                    self.reviews = [dict(self.coverage(info, **changes), state=state)]
+                    self.assertEqual(self.select()['range_kind'], 'full')
 
     def test_settings_prompt_and_intent_changes_require_full_review(self):
         info = self.select()
@@ -111,15 +122,21 @@ class ReviewRangeTest(unittest.TestCase):
         (self.ctx / 'pr.json').write_text(json.dumps(dict(title='Fix', body='Changed intent', headRefOid=self.head)))
         self.assertEqual(self.select()['range_kind'], 'full')
 
-    def test_approval_without_trusted_matching_coverage_is_not_progress(self):
+    def test_review_without_trusted_matching_coverage_is_not_progress(self):
         info = self.select()
-        cases = [dict(user={'login': self.bot}, state='APPROVED', commit_id=self.previous, body='Looks good'),
-                 dict(self.coverage(info), user={'login': 'someone-else'}),
-                 dict(self.coverage(info), commit_id=self.head),
-                 dict(self.coverage(info), state='PENDING')]
-        for review in cases:
-            with self.subTest(review=review):
-                self.reviews = [review]
+        for state in ('APPROVED', 'DISMISSED'):
+            cases = [dict(user={'login': self.bot}, state=state, commit_id=self.previous, body='Looks good'),
+                     dict(self.coverage(info), state=state, user={'login': 'someone-else'}),
+                     dict(self.coverage(info), state=state, commit_id=self.head),
+                     dict(self.coverage(info, profile='different-settings'), state=state),
+                     dict(self.coverage(info, version=2), state=state)]
+            for review in cases:
+                with self.subTest(state=state, review=review):
+                    self.reviews = [review]
+                    self.assertEqual(self.select()['range_kind'], 'full')
+        for state in ('PENDING', 'COMMENTED', 'CHANGES_REQUESTED'):
+            with self.subTest(state=state):
+                self.reviews = [dict(self.coverage(info), state=state)]
                 self.assertEqual(self.select()['range_kind'], 'full')
 
     def test_explicit_full_and_commit_mode_ignore_coverage(self):
