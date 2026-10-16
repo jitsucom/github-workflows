@@ -147,6 +147,63 @@ name exported by analysis, including when only failed jobs are rerun:
 Only data is read from the analysis artifact; publisher code comes from the workflow.
 The model, reasoning effort, and CLI/action pins remain unchanged by this separation.
 
+#### Incremental review and execution controls
+
+The publisher records an `ai-review-coverage` marker only after a validated review is
+posted. An APPROVE verdict without that marker does not count as coverage. A follow-up
+PR review starts at the last compatible reviewed SHA when it is an ancestor of the
+current head and the full PR merge base is unchanged. First reviews, rebases, force
+pushes, base changes, and incompatible settings fall back to the full PR diff. Same-head
+reruns also review the full diff. Commit reviews remain parent-to-commit.
+
+Compatibility is a hash of the generated prompt, model, effort, CLI version, trusted bot
+login, additional instructions, and PR title/body. Changes to these inputs require a
+full review. Prior findings and dismissal explanations remain in the supplied context.
+`range.json` in the context and artifact records both the selected range and full PR base.
+
+Incremental deleted-line coordinates refer to the prior reviewed tree. Such findings,
+and restored lines absent from GitHub's overall PR diff, are included in the review
+summary with their path/range instead of being posted at an incorrect inline location.
+These summary findings do not create resolvable inline threads. Oversized summaries
+are split into bounded reviews; only the final accepted part records coverage. Retries
+suppress findings from earlier accepted parts. A new head still receives
+a completion marker when all findings were already reported, without duplicate comments.
+
+These inputs are available through `workflow_call` and manual dispatch:
+
+| Input | Default | Purpose |
+|-------|---------|---------|
+| `review_model` | `gpt-5.6-terra` | Explicit model identifier |
+| `review_effort` | `high` | `low`, `medium`, `high`, `xhigh`, or `max`; model must support it |
+| `analysis_timeout_minutes` | `12` | Per-engine timeout; integer from 1 to 30 |
+| `codex_version` | `0.149.0` | Pinned stable CLI version; floating versions are rejected |
+| `incremental` | `true` | Set false to force a full comparison |
+| `review_bot_login` | `jitsu-code-review[bot]` | Trusted completion-marker author; must match the posting App |
+| `dry_run` | `false` | Validate/archive without posting or advancing coverage |
+| `benchmark_native` | `false` | Add a native-review comparison; automatically suppresses publication |
+
+`benchmark_native` runs the structured prompt first, then `codex exec review` using a
+clean worktree, the same selected range/model/effort/CLI, and a separate Codex home. The
+native engine uses its built-in review guidance and repository AGENTS.md rather than the
+custom prompt/PR discussion context. This compares the two execution setups; it does not
+isolate prompt wording as the only variable. Both outputs are archived, including
+`native-review.md` and `native-events.jsonl` (which includes native token usage events).
+The structured result still passes the normal validator. Benchmark failure fails the run.
+
+Example: compare a newer pinned CLI without adopting it as the production default:
+
+```sh
+gh workflow run ai-review.yml --repo jitsucom/github-workflows --ref <candidate-branch> \
+  -f pr_number=<pr-number> -f codex_version=0.163.0 \
+  -f incremental=false -f dry_run=true -f benchmark_native=true
+```
+
+For reusable callers, pass the same inputs under `with:`. Primary token usage is collected
+before the native benchmark; other models retain usage counts but have no estimated
+cost until their pricing is explicitly configured. No runtime or model default changes
+are implied by a successful benchmark. Evaluate confirmed findings, false positives,
+runtime and usage across representative PRs before adopting a new default.
+
 #### Versioning
 
 Every merge to `main` is tagged `1.<commit-count>.<yyyymmdd>` by

@@ -43,7 +43,8 @@ class PublisherTest(unittest.TestCase):
                               REVIEW_BASE=self.base, REPO='owner/repo', REVIEW_MODE='pr',
                               PR_NUMBER='7', REVIEW_FILE=str(self.path / 'review.json'),
                               STATUS_FILE=str(self.path / 'publication/status.json'),
-                              REVIEW_BOT_LOGIN='review-bot[bot]')
+                              REVIEW_BOT_LOGIN='review-bot[bot]', FULL_BASE=self.base, REVIEW_PROFILE='test-profile',
+                              REVIEW_MODEL='gpt-5.6-terra', REVIEW_EFFORT='high', CODEX_VERSION='0.149.0')
         self.env.start()
         self.addCleanup(self.env.stop)
         self.data = {'version': 1, 'reviewed_sha': self.head, 'completion_status': 'complete',
@@ -114,6 +115,46 @@ class PublisherTest(unittest.TestCase):
         self.data.update(reviewed_sha=head, findings=[dict(self.f, path=path.name, start_line=1, end_line=1)])
         self.assertEqual(len(self.p.validate(self.data, head, base)), 1)
 
+    def test_incremental_restoration_uses_summary_and_records_coverage(self):
+        original_base, previous = self.base, self.head
+        (self.repo / 'file with spaces.txt').write_text('keep\nold\nlast\n')
+        self.git('add', '.')
+        self.git('commit', '-m', 'restore original lines')
+        self.head = self.git('rev-parse', 'HEAD')
+        self.base = previous
+        self.data.update(reviewed_sha=self.head, findings=[dict(self.f, side='LEFT', start_line=2, end_line=2)])
+        with patch.dict(os.environ, REVIEW_HEAD=self.head, REVIEW_BASE=previous, FULL_BASE=original_base), patch.object(self.p, 'api', self.api):
+            self.live['head']['sha'] = self.head
+            self.assertEqual(self.publish(), ('published', 1))
+        payload = self.posts[-1][1]
+        self.assertEqual(payload['comments'], [])
+        self.assertIn(self.f['body'], payload['body'])
+        self.assertIn('LEFT of reviewed range', payload['body'])
+        self.assertIn('ai-review-coverage:', payload['body'])
+        self.assertIn('"base":"' + original_base + '"', payload['body'])
+
+    def test_large_incremental_summary_parts_record_coverage_only_at_end(self):
+        self.findings()
+        # Force legitimate delta findings into summary mode; validation is exercised
+        # separately by the restoration fixture above.
+        findings = [dict(self.p.validate(self.data, self.head, self.base)[0],
+                         title='Finding ' + str(i), body='x' * 6000, fingerprint=str(i)) for i in range(12)]
+        with patch.dict(os.environ, REVIEW_BASE=self.head), patch.object(self.p, 'changed_lines', return_value={}), patch.object(self.p, 'api', self.api):
+            self.assertEqual(self.p.publish(self.data, findings, 'owner/repo', 'pr', '7', self.head), ('published', 12))
+        self.assertGreater(len(self.posts), 1)
+        for _, payload in self.posts:
+            self.assertLessEqual(len(payload['body'].encode()), 60000)
+        self.assertNotIn('ai-review-coverage:', self.posts[0][1]['body'])
+        self.assertIn('ai-review-coverage:', self.posts[-1][1]['body'])
+        # Simulate the first part succeeding and the final POST failing.
+        prior = self.posts[0][1]['body']
+        self.posts.clear()
+        self.reviews = [{'user': {'login': 'review-bot[bot]'}, 'body': prior}]
+        with patch.dict(os.environ, REVIEW_BASE=self.head), patch.object(self.p, 'changed_lines', return_value={}), patch.object(self.p, 'api', self.api):
+            self.p.publish(self.data, findings, 'owner/repo', 'pr', '7', self.head)
+        self.assertNotIn('ai-review-finding:0 -->', self.posts[0][1]['body'])
+        self.assertIn('ai-review-coverage:', self.posts[-1][1]['body'])
+
     def test_invalid_output_is_never_published(self):
         cases = [None, {}, dict(self.data, completion_status='incomplete'),
                  dict(self.data, reviewed_sha=self.base), dict(self.data, version=True)]
@@ -164,8 +205,8 @@ class PublisherTest(unittest.TestCase):
         self.assertEqual(len(self.p.validate(self.data, self.head, self.base)), 1)
         self.history = [{'user': {'login': 'review-bot[bot]'}, 'body': self.p.comment_body(f), 'line': 999}]
         with patch.object(self.p, 'api', self.api):
-            self.assertEqual(self.publish(), ('duplicate', 0))
-        self.assertFalse(self.posts)
+            self.assertEqual(self.publish(), ('published', 0))
+        self.assertEqual(self.posts[-1][1]['comments'], [])
         self.history[0]['user']['login'] = 'another-user'
         with patch.object(self.p, 'api', self.api):
             self.assertEqual(self.publish(), ('published', 1))
