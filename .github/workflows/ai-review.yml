@@ -16,6 +16,38 @@ on:
         description: "Commit SHA to review (passed through from caller workflow_dispatch)."
         required: false
         type: string
+      review_model:
+        description: "Explicit model for analysis and optional native benchmark."
+        type: string
+        default: "gpt-5.6-terra"
+      review_effort:
+        description: "Reasoning effort: low, medium, high, xhigh, or max."
+        type: string
+        default: "high"
+      analysis_timeout_minutes:
+        description: "Timeout per analysis engine, between 1 and 30 minutes."
+        type: number
+        default: 12
+      codex_version:
+        description: "Pinned stable CLI version; candidate versions can be tested in dry runs."
+        type: string
+        default: "0.149.0"
+      incremental:
+        description: "Review changes since the last compatible completed review."
+        type: boolean
+        default: true
+      review_bot_login:
+        description: "Trusted reviewer bot whose completion markers select incremental ranges."
+        type: string
+        default: "jitsu-code-review[bot]"
+      dry_run:
+        description: "Validate and archive results without publishing or recording coverage."
+        type: boolean
+        default: false
+      benchmark_native:
+        description: "Also run codex exec review for comparison; implies dry-run publication."
+        type: boolean
+        default: false
     secrets:
       OPENAI_API_KEY:
         required: true
@@ -40,6 +72,38 @@ on:
       commit_sha:
         description: Commit SHA to review (leave blank when using PR number)
         required: false
+      review_model:
+        description: "Explicit model for analysis and optional native benchmark."
+        type: string
+        default: "gpt-5.6-terra"
+      review_effort:
+        description: "Reasoning effort: low, medium, high, xhigh, or max."
+        type: string
+        default: "high"
+      analysis_timeout_minutes:
+        description: "Timeout per analysis engine, between 1 and 30 minutes."
+        type: number
+        default: 12
+      codex_version:
+        description: "Pinned stable CLI version; candidate versions can be tested in dry runs."
+        type: string
+        default: "0.149.0"
+      incremental:
+        description: "Review changes since the last compatible completed review."
+        type: boolean
+        default: true
+      review_bot_login:
+        description: "Trusted reviewer bot whose completion markers select incremental ranges."
+        type: string
+        default: "jitsu-code-review[bot]"
+      dry_run:
+        description: "Validate and archive results without publishing or recording coverage."
+        type: boolean
+        default: false
+      benchmark_native:
+        description: "Also run codex exec review for comparison; implies dry-run publication."
+        type: boolean
+        default: false
 
 env:
   REVIEW_INSTRUCTIONS: ${{ inputs.review_instructions || '' }}
@@ -55,7 +119,7 @@ jobs:
       github.event_name != 'pull_request' ||
       github.event.pull_request.draft == false
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 75 # Two engines at up to 30 minutes each, plus setup/artifacts.
 
     permissions:
       contents: read
@@ -65,10 +129,35 @@ jobs:
       review_mode: ${{ steps.resolve-target.outputs.review_mode }}
       pr_number: ${{ steps.resolve-target.outputs.pr_number }}
       compare_head: ${{ steps.resolve-target.outputs.compare_head }}
-      compare_base: ${{ steps.prepare-context.outputs.compare_base }}
+      compare_base: ${{ steps.select-range.outputs.compare_base }}
+      full_base: ${{ steps.prepare-context.outputs.compare_base }}
+      review_profile: ${{ steps.select-range.outputs.review_profile }}
       subject_url: ${{ steps.resolve-target.outputs.subject_url }}
 
+    env:
+      REVIEW_MODEL: ${{ inputs.review_model || 'gpt-5.6-terra' }}
+      REVIEW_EFFORT: ${{ inputs.review_effort || 'high' }}
+      CODEX_VERSION: ${{ inputs.codex_version || '0.149.0' }}
+      REVIEW_BOT_LOGIN: ${{ inputs.review_bot_login || 'jitsu-code-review[bot]' }}
+
     steps:
+      - name: "⚙️ Validate execution settings"
+        env:
+          TIMEOUT_MINUTES: ${{ inputs.analysis_timeout_minutes }}
+        run: |
+          python3 - <<'PYTHON_EOF'
+          import os, re
+          if not re.fullmatch(r'[a-zA-Z0-9._-]+', os.environ['REVIEW_MODEL']):
+              raise ValueError('Expected an explicit model identifier')
+          if os.environ['REVIEW_EFFORT'] not in ('low', 'medium', 'high', 'xhigh', 'max'):
+              raise ValueError('Unsupported reasoning effort')
+          if not re.fullmatch(r'\d+\.\d+\.\d+', os.environ['CODEX_VERSION']):
+              raise ValueError('Expected a pinned stable CLI version')
+          timeout = float(os.environ['TIMEOUT_MINUTES'] or '12')
+          if not timeout.is_integer() or not 1 <= timeout <= 30:
+              raise ValueError('Timeout must be an integer from 1 to 30 minutes')
+          PYTHON_EOF
+
       - name: "🧭 Resolve review target"
         id: resolve-target
         env:
@@ -244,7 +333,7 @@ jobs:
           cat > .github/workflows/ai-review.prompt.md << 'PROMPT_EOF'
           You are reviewing a GitHub change set for bugs, security issues, correctness problems, and user-visible regressions.
 
-          Read `.github/codex/context/review-target.txt` first. The checkout is the exact compare_head; review `git diff compare_base compare_head` using the recorded SHAs. For PRs, compare_base is the merge base, not the base branch tip.
+          Read `.github/codex/context/review-target.txt` first. The checkout is the exact compare_head; review `git diff compare_base compare_head` using the recorded SHAs. Read `.github/codex/context/range.json` for full versus incremental scope. An incremental range starts at the last compatible completed review, while full_base always records the PR merge base. Inspect earlier code as needed to validate new changes, without re-reviewing unchanged code.
 
           Context:
           - In PR mode, read `.github/codex/context/pr.json` for the title, description, and intentional decisions/tradeoffs. Read `review-threads.json` and `review-thread-comments.json` in that directory for previous findings and their explanations.
@@ -276,10 +365,88 @@ jobs:
           Never use or mention "WIP".
           PROMPT_EOF
 
+      - name: "📐 Select review range"
+        id: select-range
+        if: ${{ steps.resolve-target.outputs.review_mode != 'skip' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REVIEW_MODE: ${{ steps.resolve-target.outputs.review_mode }}
+          PR_NUMBER: ${{ steps.resolve-target.outputs.pr_number }}
+          COMPARE_HEAD: ${{ steps.resolve-target.outputs.compare_head }}
+          FULL_BASE: ${{ steps.prepare-context.outputs.compare_base }}
+          INCREMENTAL: ${{ toJSON(inputs.incremental) != 'false' }}
+        run: |
+          python3 - <<'PYTHON_EOF'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+
+
+          def select_range(reviews, head, full_base, profile, bot, ancestor):
+              for review in reversed(reviews):
+                  if (review.get('user') or {}).get('login') != bot or review.get('state') != 'APPROVED':
+                      continue
+                  for raw in re.findall(r'<!-- ai-review-coverage:(.*?) -->', review.get('body') or ''):
+                      try:
+                          coverage = json.loads(raw)
+                      except ValueError:
+                          continue
+                      previous = coverage.get('head', '') if isinstance(coverage, dict) else ''
+                      if (not re.fullmatch(r'[0-9a-f]{40}', previous) or coverage.get('version') != 1
+                              or previous != review.get('commit_id') or coverage.get('profile') != profile):
+                          continue
+                      if coverage.get('base') == full_base and previous != head and ancestor(previous, head):
+                          return previous, 'incremental'
+                      # Rewrites/base changes require a full review, not an older fallback marker.
+                      return full_base, 'full'
+              return full_base, 'full'
+
+
+          def main():
+              root = Path('.github/codex')
+              head, full_base = os.environ['COMPARE_HEAD'], os.environ['FULL_BASE']
+              pr = json.loads((root / 'context/pr.json').read_text()) if os.environ['REVIEW_MODE'] == 'pr' else None
+              settings = {key: os.environ[key] for key in ('REVIEW_MODEL', 'REVIEW_EFFORT', 'CODEX_VERSION', 'REVIEW_BOT_LOGIN')}
+              material = {'settings': settings, 'pr': pr,
+                          'prompt': Path('.github/workflows/ai-review.prompt.md').read_text(),
+                          'additional': (root / 'context/additional-instructions.txt').read_text()}
+              # Head is range metadata, not review guidance: it must not invalidate every fixup.
+              if pr:
+                  material['pr'] = {k: pr[k] for k in ('title', 'body')}
+              profile = hashlib.sha256(json.dumps(material, sort_keys=True).encode()).hexdigest()
+              reviews = []
+              if os.environ['REVIEW_MODE'] == 'pr' and os.environ['INCREMENTAL'] == 'true':
+                  raw = subprocess.check_output(['gh', 'api', f"repos/{os.environ['REPO']}/pulls/{os.environ['PR_NUMBER']}/reviews?per_page=100",
+                                                 '--paginate', '--slurp'], text=True)
+                  reviews = [review for page in json.loads(raw) for review in page]
+              def ancestor(old, new):
+                  return subprocess.run(['git', 'merge-base', '--is-ancestor', old, new],
+                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+              base, kind = select_range(reviews, head, full_base, profile, os.environ['REVIEW_BOT_LOGIN'], ancestor)
+              info = dict(compare_base=base, compare_head=head, full_base=full_base, range_kind=kind, review_profile=profile, **settings)
+              for folder in ('context', 'output'):
+                  (root / folder / 'range.json').write_text(json.dumps(info, indent=2) + '\n')
+              target = root / 'context/review-target.txt'
+              target.write_text(re.sub(r'^compare_base:.*$', 'compare_base: ' + base, target.read_text(), flags=re.M))
+              for flag, filename in [('--stat', 'diff-stat.txt'), ('--name-only', 'diff-files.txt')]:
+                  (root / 'output' / filename).write_text(subprocess.check_output(['git', 'diff', flag, base, head], text=True))
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+                  for key in ('compare_base', 'review_profile', 'range_kind'):
+                      output.write(f'{key}={info[key]}\n')
+
+
+          if __name__ == '__main__':
+              main()
+          PYTHON_EOF
+
       - name: "🤖 Run Codex analysis"
         if: ${{ steps.resolve-target.outputs.review_mode != 'skip' }}
         id: run-codex
-        timeout-minutes: 12
+        timeout-minutes: ${{ inputs.analysis_timeout_minutes || 12 }}
         env:
           REVIEW_MODE: ${{ steps.resolve-target.outputs.review_mode }}
           REPO: ${{ github.repository }}
@@ -296,12 +463,12 @@ jobs:
           output-file: .github/codex/output/review.json
           output-schema: >-
             {"type": "object", "additionalProperties": false, "required": ["version", "reviewed_sha", "completion_status", "summary", "findings"], "properties": {"version": {"type": "integer", "enum": [1]}, "reviewed_sha": {"type": "string"}, "completion_status": {"type": "string", "enum": ["complete", "incomplete"]}, "summary": {"type": "string"}, "findings": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["priority", "title", "body", "path", "side", "start_line", "end_line"], "properties": {"priority": {"type": "string", "enum": ["P0", "P1", "P2"]}, "title": {"type": "string"}, "body": {"type": "string"}, "path": {"type": "string"}, "side": {"type": "string", "enum": ["LEFT", "RIGHT"]}, "start_line": {"type": "integer"}, "end_line": {"type": "integer"}}}}}}
-          model: gpt-5.6-terra
-          effort: high
+          model: ${{ env.REVIEW_MODEL }}
+          effort: ${{ env.REVIEW_EFFORT }}
           # the CLI floated to npm latest too; pinned to the release verified
           # clean with v1.11 so a CLI release can't change review behaviour
           # under us either
-          codex-version: 0.149.0
+          codex-version: ${{ env.CODEX_VERSION }}
           codex-home: .github/codex/home
           sandbox: danger-full-access
           # Allow reviews on PRs opened by github-actions[bot] (e.g. the
@@ -317,7 +484,7 @@ jobs:
         id: estimate-cost
         env:
           CODEX_HOME: .github/codex/home
-          MODEL: gpt-5.6-terra
+          MODEL: ${{ env.REVIEW_MODEL }}
           # Standard text-token rates per 1M tokens, sourced from:
           # https://developers.openai.com/api/docs/models/gpt-5.6-terra
           PRICE_INPUT_PER_M: "2.0"
@@ -327,7 +494,9 @@ jobs:
           set -euo pipefail
 
           echo "model=$MODEL" >> "$GITHUB_OUTPUT"
-          echo "price_source=https://developers.openai.com/api/docs/models/gpt-5.6-terra" >> "$GITHUB_OUTPUT"
+          if [ "$MODEL" = "gpt-5.6-terra" ]; then
+            echo "price_source=https://developers.openai.com/api/docs/models/gpt-5.6-terra" >> "$GITHUB_OUTPUT"
+          fi
 
           SESSION_FILE=$(find "$CODEX_HOME" -type f -name '*.jsonl' -print 2>/dev/null | xargs ls -t 2>/dev/null | head -n1 || true)
           if [ -z "$SESSION_FILE" ]; then
@@ -357,12 +526,15 @@ jobs:
           OUTPUT_TOKENS=$(echo "$USAGE_JSON" | jq -r '.output_tokens // 0')
           TOTAL_TOKENS=$(echo "$USAGE_JSON" | jq -r '.total_tokens // (.input_tokens + .output_tokens)')
 
-          COST_USD=$(awk -v i="$INPUT_TOKENS" -v ci="$CACHED_INPUT_TOKENS" -v o="$OUTPUT_TOKENS" \
+          COST_USD=""
+          if [ "$MODEL" = "gpt-5.6-terra" ]; then
+            COST_USD=$(awk -v i="$INPUT_TOKENS" -v ci="$CACHED_INPUT_TOKENS" -v o="$OUTPUT_TOKENS" \
             -v pi="$PRICE_INPUT_PER_M" -v pci="$PRICE_CACHED_INPUT_PER_M" -v po="$PRICE_OUTPUT_PER_M" \
             'BEGIN {
                cost = ((i-ci)/1000000.0)*pi + (ci/1000000.0)*pci + (o/1000000.0)*po;
                printf "%.6f", cost
              }')
+          fi
 
           echo "usage_found=true" >> "$GITHUB_OUTPUT"
           echo "input_tokens=$INPUT_TOKENS" >> "$GITHUB_OUTPUT"
@@ -374,11 +546,33 @@ jobs:
           echo "Token usage: input=$INPUT_TOKENS cached_input=$CACHED_INPUT_TOKENS output=$OUTPUT_TOKENS total=$TOTAL_TOKENS"
           echo "Estimated run cost (USD): $COST_USD"
 
+      - name: "🔬 Benchmark native review (artifact only)"
+        if: ${{ inputs.benchmark_native && steps.run-codex.outcome == 'success' }}
+        id: native-review
+        timeout-minutes: ${{ inputs.analysis_timeout_minutes || 12 }}
+        env:
+          CODEX_HOME: ${{ github.workspace }}/.github/codex/native-home
+          REVIEW_BASE: ${{ steps.select-range.outputs.compare_base }}
+          REVIEW_HEAD: ${{ steps.resolve-target.outputs.compare_head }}
+          REVIEW_MODE: ${{ steps.resolve-target.outputs.review_mode }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$CODEX_HOME"
+          cp .github/codex/home/config.toml "$CODEX_HOME/config.toml"
+          git worktree add --detach "$RUNNER_TEMP/native-review" "$REVIEW_HEAD"
+          ARGS=(--base "$REVIEW_BASE")
+          [ "$REVIEW_MODE" = "commit" ] && ARGS=(--commit "$REVIEW_HEAD")
+          codex exec --cd "$RUNNER_TEMP/native-review" --model "$REVIEW_MODEL" \
+            --config "model_reasoning_effort=\"$REVIEW_EFFORT\"" --sandbox read-only \
+            --json --output-last-message "$GITHUB_WORKSPACE/.github/codex/output/native-review.md" \
+            review "${ARGS[@]}" > .github/codex/output/native-events.jsonl
+
       - name: "🧾 Record analysis status"
         if: ${{ always() && steps.resolve-target.outputs.review_mode != 'skip' }}
         env:
           REVIEWED_SHA: ${{ steps.resolve-target.outputs.compare_head }}
           ANALYSIS_OUTCOME: ${{ steps.run-codex.outcome }}
+          NATIVE_OUTCOME: ${{ steps.native-review.outcome }}
           USAGE_FOUND: ${{ steps.estimate-cost.outputs.usage_found }}
           INPUT_TOKENS: ${{ steps.estimate-cost.outputs.input_tokens }}
           CACHED_INPUT_TOKENS: ${{ steps.estimate-cost.outputs.cached_input_tokens }}
@@ -387,7 +581,8 @@ jobs:
         run: |
           mkdir -p .github/codex/output
           jq -n '{reviewed_sha:env.REVIEWED_SHA,analysis_outcome:env.ANALYSIS_OUTCOME,
-            model:"gpt-5.6-terra",effort:"high",codex_version:"0.149.0",
+            model:env.REVIEW_MODEL,effort:env.REVIEW_EFFORT,codex_version:env.CODEX_VERSION,
+            native_benchmark_outcome:env.NATIVE_OUTCOME,
             usage_found:env.USAGE_FOUND,input_tokens:env.INPUT_TOKENS,
             cached_input_tokens:env.CACHED_INPUT_TOKENS,output_tokens:env.OUTPUT_TOKENS,
             estimated_cost_usd:env.ESTIMATED_COST}' > .github/codex/output/analysis-status.json
@@ -403,7 +598,10 @@ jobs:
             [ -n "${{ steps.resolve-target.outputs.skip_reason }}" ] && echo "- Skip reason: ${{ steps.resolve-target.outputs.skip_reason }}"
             echo "- Analysis outcome: ${{ steps.run-codex.outcome }}"
             echo "- Review output: review.json (validated and published in a separate job)"
-            echo "- Model: ${{ steps.estimate-cost.outputs.model || 'n/a' }}"
+            echo "- Model: $REVIEW_MODEL / $REVIEW_EFFORT / CLI $CODEX_VERSION"
+            echo "- Range: ${{ steps.select-range.outputs.range_kind }}"
+            echo "- Native benchmark: ${{ steps.native-review.outcome }}"
+            echo "- Dry run: ${{ inputs.dry_run || inputs.benchmark_native }}"
             if [ "${{ steps.estimate-cost.outputs.usage_found || 'false' }}" = "true" ]; then
               echo "- Token usage: input=${{ steps.estimate-cost.outputs.input_tokens }}, cached_input=${{ steps.estimate-cost.outputs.cached_input_tokens }}, output=${{ steps.estimate-cost.outputs.output_tokens }}, total=${{ steps.estimate-cost.outputs.total_tokens }}"
               echo "- Estimated model cost (USD): ${{ steps.estimate-cost.outputs.estimated_cost_usd }}"
@@ -437,6 +635,12 @@ jobs:
       PR_NUMBER: ${{ needs.ai-review.outputs.pr_number }}
       REVIEW_HEAD: ${{ needs.ai-review.outputs.compare_head }}
       REVIEW_BASE: ${{ needs.ai-review.outputs.compare_base }}
+      FULL_BASE: ${{ needs.ai-review.outputs.full_base }}
+      REVIEW_PROFILE: ${{ needs.ai-review.outputs.review_profile }}
+      REVIEW_MODEL: ${{ inputs.review_model || 'gpt-5.6-terra' }}
+      REVIEW_EFFORT: ${{ inputs.review_effort || 'high' }}
+      CODEX_VERSION: ${{ inputs.codex_version || '0.149.0' }}
+      EXPECTED_BOT_LOGIN: ${{ inputs.review_bot_login || 'jitsu-code-review[bot]' }}
       REVIEW_REPO: ${{ github.workspace }}/reviewed-repo
       REVIEW_FILE: ${{ github.workspace }}/review-artifact/review.json
       STATUS_FILE: ${{ github.workspace }}/publication/status.json
@@ -573,9 +777,12 @@ jobs:
 
 
           def publish(data, findings, repo, mode, subject, head):
-              digest = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
+              digest = hashlib.sha256(json.dumps([data, os.environ['REVIEW_PROFILE'], os.environ['REVIEW_BASE']], sort_keys=True).encode()).hexdigest()
               review_marker = f'<!-- ai-review:{head}:{digest} -->'
-              summary = f"Review of `{head}`\n\n{data['summary']}\n\n{review_marker}"
+              coverage = json.dumps(dict(version=1, base=os.environ['FULL_BASE'], head=head,
+                                         profile=os.environ['REVIEW_PROFILE']), separators=(',', ':'))
+              summary = f"Review of `{head}`\n\n{data['summary']}"
+              completion = f"\n\n{review_marker}\n<!-- ai-review-coverage:{coverage} -->"
               if mode == 'pr':
                   endpoint = f'repos/{repo}/pulls/{subject}'
                   comments = api(endpoint + '/comments?per_page=100', paginate=True)
@@ -583,26 +790,44 @@ jobs:
                   login = os.environ['REVIEW_BOT_LOGIN']
                   own_comments = [c for c in comments if (c.get('user') or {}).get('login') == login]
                   own_reviews = [r for r in reviews if (r.get('user') or {}).get('login') == login]
-                  fresh = [f for f in findings if not any(marker(f) in c['body'] for c in own_comments)]
+                  fresh = [f for f in findings if not any(marker(f) in (c.get('body') or '') for c in own_comments + own_reviews)]
                   # Check after fetching history, immediately before any publication.
                   current = api(endpoint)
                   if current['state'] != 'open' or current['draft'] or current['head']['sha'] != head:
                       raise ValueError('PR closed, draft, or changed head; stale review discarded')
-                  if any(review_marker in (r.get('body') or '') for r in own_reviews) or (findings and not fresh):
+                  if any(review_marker in (r.get('body') or '') for r in own_reviews):
                       return 'duplicate', 0
-                  inline = []
+                  inline, parts = [], [summary]
+                  full_ranges = changed_lines(os.environ['FULL_BASE'], head)
                   for f in fresh:
+                      # Incremental LEFT coordinates refer to the prior reviewed tree,
+                      # not the PR base. Restored lines may not exist in the PR diff.
+                      anchorable = (f['side'] == 'RIGHT' or os.environ['REVIEW_BASE'] == os.environ['FULL_BASE']) and any(
+                          lo <= f['start_line'] <= f['end_line'] <= hi
+                          for lo, hi in full_ranges.get(f['path'], {}).get(f['side'], []))
+                      if not anchorable:
+                          block = '\n\n' + comment_body(f) + f"\n\n`{f['path']}:{f['start_line']}-{f['end_line']}` ({f['side']} of reviewed range)."
+                          if len((parts[-1] + block + completion).encode()) > 60000:
+                              parts.append(f"Additional findings for `{head}`")
+                          parts[-1] += block
+                          continue
                       c = {'path': f['path'], 'side': f['side'], 'line': f['end_line'], 'body': comment_body(f)}
                       if f['start_line'] != f['end_line']:
                           c.update(start_line=f['start_line'], start_side=f['side'])
                       inline.append(c)
-                  result = api(endpoint + '/reviews', {'commit_id': head, 'event': 'APPROVE', 'body': summary, 'comments': inline})
-                  return 'published', len(inline)
+                  # Only the final accepted part records complete coverage. On retry,
+                  # fingerprints suppress findings from earlier accepted parts.
+                  for index, body in enumerate(parts):
+                      if index == len(parts) - 1:
+                          body += completion
+                      api(endpoint + '/reviews', {'commit_id': head, 'event': 'APPROVE', 'body': body,
+                                                 'comments': inline if index == 0 else []})
+                  return 'published', len(fresh)
               endpoint = f'repos/{repo}/commits/{head}/comments'
               comments = api(endpoint + '?per_page=100', paginate=True)
               if any(review_marker in c['body'] and c['user']['login'] == 'github-actions[bot]' for c in comments):
                   return 'duplicate', 0
-              body = summary + ''.join('\n\n' + comment_body(f) + f"\n\n`{f['path']}:{f['start_line']}-{f['end_line']}` ({f['side']})" for f in findings)
+              body = summary + completion + ''.join('\n\n' + comment_body(f) + f"\n\n`{f['path']}:{f['start_line']}-{f['end_line']}` ({f['side']})" for f in findings)
               if len(body) > 60000:
                   raise ValueError('Commit review exceeds comment size limit')
               api(endpoint, {'body': body})
@@ -611,7 +836,9 @@ jobs:
 
           def main():
               status = {'completion_status': 'failed', 'publication_status': 'not_posted',
-                        'reviewed_sha': os.environ['REVIEW_HEAD'], 'model': 'gpt-5.6-terra', 'effort': 'high'}
+                        'reviewed_sha': os.environ['REVIEW_HEAD'], 'compare_base': os.environ['REVIEW_BASE'],
+                        'model': os.environ['REVIEW_MODEL'], 'effort': os.environ['REVIEW_EFFORT'],
+                        'codex_version': os.environ['CODEX_VERSION'], 'review_profile': os.environ['REVIEW_PROFILE']}
               try:
                   head, base = os.environ['REVIEW_HEAD'], os.environ['REVIEW_BASE']
                   if not re.fullmatch(r'[0-9a-f]{40}', head) or not re.fullmatch(r'[0-9a-f]{40}', base):
@@ -649,7 +876,7 @@ jobs:
 
       # Mint posting credentials only after validation, on a runner that never ran Codex.
       - name: "🔑 Generate GitHub App token for PR review"
-        if: ${{ env.REVIEW_MODE == 'pr' }}
+        if: ${{ env.REVIEW_MODE == 'pr' && !inputs.dry_run && !inputs.benchmark_native }}
         id: app-token
         uses: actions/create-github-app-token@v2
         with:
@@ -659,10 +886,16 @@ jobs:
           repositories: ${{ github.event.repository.name }}
 
       - name: "💬 Publish validated review"
+        if: ${{ !inputs.dry_run && !inputs.benchmark_native }}
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
           REVIEW_BOT_LOGIN: ${{ steps.app-token.outputs.app-slug }}[bot]
-        run: python3 publication/publish.py
+        run: |
+          if [ "$REVIEW_MODE" = "pr" ] && [ "$REVIEW_BOT_LOGIN" != "$EXPECTED_BOT_LOGIN" ]; then
+            echo "Configured review_bot_login does not match the posting App" >&2
+            exit 1
+          fi
+          python3 publication/publish.py
 
       - name: "📝 Write publication summary"
         if: always()

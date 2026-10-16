@@ -115,8 +115,8 @@ else:
         self.assertIn('Intentional tradeoffs are context, not immunity', prompt)
         self.assertIn('Re-raise a dismissed finding only if new changes invalidate', prompt)
         self.assertNotIn('still prefer to post it', prompt)
-        self.assertIn('model: gpt-5.6-terra', text)
-        self.assertIn('codex-version: 0.149.0', text)
+        self.assertIn("REVIEW_MODEL: ${{ inputs.review_model || 'gpt-5.6-terra' }}", text)
+        self.assertIn("CODEX_VERSION: ${{ inputs.codex_version || '0.149.0' }}", text)
 
 
 if __name__ == '__main__':
