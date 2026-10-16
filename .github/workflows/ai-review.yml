@@ -484,66 +484,142 @@ jobs:
         env:
           CODEX_HOME: .github/codex/home
           MODEL: ${{ env.REVIEW_MODEL }}
-          # Standard text-token rates per 1M tokens, sourced from:
-          # https://developers.openai.com/api/docs/models/gpt-5.6-terra
-          PRICE_INPUT_PER_M: "2.0"
-          PRICE_CACHED_INPUT_PER_M: "0.2"
-          PRICE_OUTPUT_PER_M: "12.0"
         run: |
-          set -euo pipefail
+          python3 - <<'PYTHON_EOF'
+          import json
+          import os
+          from decimal import Decimal as D
+          from pathlib import Path
 
-          echo "model=$MODEL" >> "$GITHUB_OUTPUT"
-          if [ "$MODEL" = "gpt-5.6-terra" ]; then
-            echo "price_source=https://developers.openai.com/api/docs/models/gpt-5.6-terra" >> "$GITHUB_OUTPUT"
-          fi
-
-          SESSION_FILE=$(find "$CODEX_HOME" -type f -name '*.jsonl' -print 2>/dev/null | xargs ls -t 2>/dev/null | head -n1 || true)
-          if [ -z "$SESSION_FILE" ]; then
-            echo "Codex session log (*.jsonl) not found under $CODEX_HOME. Token usage unavailable."
-            echo "usage_found=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          echo "Inspecting Codex session log: $SESSION_FILE"
-          USAGE_JSON=$(jq -cn '
-            reduce inputs as $line (null;
-              if ($line.type == "event_msg" and ($line.payload.type // "") == "token_count")
-              then $line.payload.info.total_token_usage
-              else .
-              end
-            )
-          ' "$SESSION_FILE")
-
-          if [ -z "$USAGE_JSON" ] || [ "$USAGE_JSON" = "null" ]; then
-            echo "No token_count event found in Codex session log. Token usage unavailable."
-            echo "usage_found=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          INPUT_TOKENS=$(echo "$USAGE_JSON" | jq -r '.input_tokens // 0')
-          CACHED_INPUT_TOKENS=$(echo "$USAGE_JSON" | jq -r '.cached_input_tokens // 0')
-          OUTPUT_TOKENS=$(echo "$USAGE_JSON" | jq -r '.output_tokens // 0')
-          TOTAL_TOKENS=$(echo "$USAGE_JSON" | jq -r '.total_tokens // (.input_tokens + .output_tokens)')
-
-          COST_USD=""
-          if [ "$MODEL" = "gpt-5.6-terra" ]; then
-            COST_USD=$(awk -v i="$INPUT_TOKENS" -v ci="$CACHED_INPUT_TOKENS" -v o="$OUTPUT_TOKENS" \
-            -v pi="$PRICE_INPUT_PER_M" -v pci="$PRICE_CACHED_INPUT_PER_M" -v po="$PRICE_OUTPUT_PER_M" \
-            'BEGIN {
-               cost = ((i-ci)/1000000.0)*pi + (ci/1000000.0)*pci + (o/1000000.0)*po;
-               printf "%.6f", cost
-             }')
-          fi
-
-          echo "usage_found=true" >> "$GITHUB_OUTPUT"
-          echo "input_tokens=$INPUT_TOKENS" >> "$GITHUB_OUTPUT"
-          echo "cached_input_tokens=$CACHED_INPUT_TOKENS" >> "$GITHUB_OUTPUT"
-          echo "output_tokens=$OUTPUT_TOKENS" >> "$GITHUB_OUTPUT"
-          echo "total_tokens=$TOTAL_TOKENS" >> "$GITHUB_OUTPUT"
-          echo "estimated_cost_usd=$COST_USD" >> "$GITHUB_OUTPUT"
-
-          echo "Token usage: input=$INPUT_TOKENS cached_input=$CACHED_INPUT_TOKENS output=$OUTPUT_TOKENS total=$TOTAL_TOKENS"
-          echo "Estimated run cost (USD): $COST_USD"
+          # Standard USD / 1M text tokens, verified 2026-10-16:
+          # https://developers.openai.com/api/docs/pricing (including its All models tables).
+          # Order: uncached input, cached input, cache writes, output.
+          PRICES = {
+              'gpt-6-astra': (D("10.00"), D("1.00"), D("12.50"), D("50.00")),
+              'gpt-6.1-sol': (D("2.00"), D("0.10"), D("2.50"), D("10.00")),
+              'gpt-6-luna': (D("0.10"), D("0.01"), D("0.125"), D("0.50")),
+              'gpt-6-sol': (D("2.00"), D("0.20"), D("2.50"), D("10.00")),
+              'gpt-5.6-sol': (D("4.00"), D("0.40"), D("5.00"), D("20.00")),
+              'gpt-5.6-terra': (D("2.00"), D("0.20"), D("2.50"), D("12.00")),
+              'gpt-5.6-luna': (D("0.20"), D("0.02"), D("0.25"), D("1.20")),
+              'gpt-5.5': (D("5.00"), D("0.50"), None, D("30.00")),
+              'gpt-5.5-pro': (D("30.00"), None, None, D("180.00")),
+              'gpt-5.4': (D("2.50"), D("0.25"), None, D("15.00")),
+              'gpt-5.4-mini': (D("0.75"), D("0.075"), None, D("4.50")),
+              'gpt-5.4-nano': (D("0.20"), D("0.02"), None, D("1.25")),
+              'gpt-5.4-pro': (D("30.00"), None, None, D("180.00")),
+              'gpt-5.2': (D("1.75"), D("0.175"), None, D("14.00")),
+              'gpt-5.2-pro': (D("21.00"), None, None, D("168.00")),
+              'gpt-5.1': (D("1.25"), D("0.125"), None, D("10.00")),
+              'gpt-5': (D("1.25"), D("0.125"), None, D("10.00")),
+              'gpt-5-mini': (D("0.25"), D("0.025"), None, D("2.00")),
+              'gpt-5-nano': (D("0.05"), D("0.005"), None, D("0.40")),
+              'gpt-5-pro': (D("15.00"), None, None, D("120.00")),
+              'gpt-4.1': (D("2.00"), D("0.50"), None, D("8.00")),
+              'gpt-4.1-mini': (D("0.40"), D("0.10"), None, D("1.60")),
+              'gpt-4.1-nano': (D("0.10"), D("0.025"), None, D("0.40")),
+              'gpt-4o': (D("2.50"), D("1.25"), None, D("10.00")),
+              'gpt-4o-2024-05-13': (D("5.00"), None, None, D("15.00")),
+              'gpt-4o-mini': (D("0.15"), D("0.075"), None, D("0.60")),
+              'o1': (D("15.00"), D("7.50"), None, D("60.00")),
+              'o1-pro': (D("150.00"), None, None, D("600.00")),
+              'o3-pro': (D("20.00"), None, None, D("80.00")),
+              'o3': (D("2.00"), D("0.50"), None, D("8.00")),
+              'o4-mini': (D("1.10"), D("0.275"), None, D("4.40")),
+              'o3-mini': (D("1.10"), D("0.55"), None, D("4.40")),
+              'gpt-4-turbo-2024-04-09': (D("10.00"), None, None, D("30.00")),
+              'gpt-4-0613': (D("30.00"), None, None, D("60.00")),
+              'gpt-3.5-turbo': (D("0.50"), None, None, D("1.50")),
+              'gpt-3.5-turbo-0125': (D("0.50"), None, None, D("1.50")),
+              'gpt-3.5-turbo-1106': (D("1.00"), None, None, D("2.00")),
+              'gpt-3.5-turbo-instruct': (D("1.50"), None, None, D("2.00")),
+              'davinci-002': (D("2.00"), None, None, D("2.00")),
+              'babbage-002': (D("0.40"), None, None, D("0.40")),
+              'gpt-5.6-cyber': (D("12.5"), D("1.25"), D("15.625"), D("75")),
+              'gpt-5.5-cyber': (D("12.5"), D("1.25"), None, D("75")),
+              'gpt-rosalind-research': (D("5"), D("0.5"), None, D("25")),
+              'gpt-rosalind-discovery': (D("5"), D("0.5"), None, D("25")),
+              'chat-latest': (D("5"), D("0.5"), None, D("30")),
+              'gpt-5.3-codex': (D("1.75"), D("0.175"), None, D("14")),
+              'gpt-5-search-api': (D("1.25"), D("0.125"), None, D("10")),
+          }
+          # Above 272K input tokens, the full request costs 2x input/cache and 1.5x output.
+          LONG_CONTEXT_MODELS = {
+              'gpt-6-astra', 'gpt-6.1-sol', 'gpt-6-sol', 'gpt-6-luna',
+              'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna',
+              'gpt-5.5', 'gpt-5.5-pro', 'gpt-5.4', 'gpt-5.4-pro',
+          }
+          FIELDS = ('input_tokens', 'cached_input_tokens', 'cache_write_input_tokens', 'output_tokens')
+          model = os.environ['MODEL']
+          result = {'model': model, 'usage_found': 'false', 'estimated_cost_usd': '',
+                    'price_source': 'https://developers.openai.com/api/docs/pricing' if model in PRICES else '',
+                    'price_verified_at': '2026-10-16' if model in PRICES else '',
+                    'pricing_basis': 'standard text tokens; excludes tools, regional and service-tier uplifts'}
+          home = Path(os.environ['CODEX_HOME'])
+          sessions = list(home.rglob('*.jsonl'))
+          reason = '' if model in PRICES else 'No verified rates for this exact model identifier'
+          if sessions:
+              session = max(sessions, key=lambda p: p.stat().st_mtime_ns)
+              previous = dict.fromkeys(FIELDS, 0)
+              cost = D(0)
+              usage = None
+              for line in session.read_text().splitlines():
+                  try:
+                      event = json.loads(line)
+                  except json.JSONDecodeError:
+                      reason = reason or 'Incomplete session log'
+                      continue
+                  if event.get('type') != 'event_msg' or event.get('payload', {}).get('type') != 'token_count':
+                      continue
+                  info = event['payload'].get('info') or {}
+                  totals = info.get('total_token_usage')
+                  if not totals:
+                      continue
+                  usage = {field: totals.get(field, 0) for field in FIELDS}
+                  if any(type(value) is not int or value < 0 for value in usage.values()):
+                      reason = reason or 'Invalid token counters'
+                      usage = None
+                      break
+                  delta = {field: usage[field] - previous[field] for field in FIELDS}
+                  previous = usage
+                  # Codex repeats totals on rate-limit updates. Charge only new usage.
+                  if not any(delta.values()):
+                      continue
+                  i, cached, writes, o = (delta[field] for field in FIELDS)
+                  if min(i, cached, writes, o) < 0 or cached + writes > i:
+                      reason = reason or 'Token counters reset or are inconsistent'
+                      continue
+                  # Cumulative deltas identify each request; session totals are not a context size.
+                  if model in LONG_CONTEXT_MODELS:
+                      last = info.get('last_token_usage')
+                      if last and any(last.get(field, 0) != delta[field] for field in FIELDS):
+                          reason = reason or 'Request boundaries unavailable for context pricing'
+                          continue
+                  rates = PRICES.get(model)
+                  if rates is None:
+                      continue
+                  if model in LONG_CONTEXT_MODELS and i > 272000:
+                      rates = tuple(rate * multiplier if rate is not None else None
+                                    for rate, multiplier in zip(rates, (D(2), D(2), D(2), D('1.5'))))
+                  for count, rate in zip((i - cached - writes, cached, writes, o), rates):
+                      if count and rate is None:
+                          reason = reason or 'No published rate for a reported token category'
+                      elif rate is not None:
+                          cost += count * rate / D(1000000)
+              if usage is not None:
+                  result.update(usage, total_tokens=usage['input_tokens'] + usage['output_tokens'], usage_found='true')
+                  if not reason:
+                      result['estimated_cost_usd'] = f'{cost:.6f}'
+              else:
+                  reason = reason or 'Token usage unavailable'
+          else:
+              reason = reason or 'Codex session log not found'
+          result['cost_unavailable_reason'] = reason
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              for key, value in result.items():
+                  output.write(f'{key}={value}\n')
+          print(json.dumps(result))
+          PYTHON_EOF
 
       - name: "🔬 Benchmark native review (artifact only)"
         if: ${{ inputs.benchmark_native && steps.run-codex.outcome == 'success' }}
@@ -577,6 +653,11 @@ jobs:
           CACHED_INPUT_TOKENS: ${{ steps.estimate-cost.outputs.cached_input_tokens }}
           OUTPUT_TOKENS: ${{ steps.estimate-cost.outputs.output_tokens }}
           ESTIMATED_COST: ${{ steps.estimate-cost.outputs.estimated_cost_usd }}
+          CACHE_WRITE_TOKENS: ${{ steps.estimate-cost.outputs.cache_write_input_tokens }}
+          PRICE_SOURCE: ${{ steps.estimate-cost.outputs.price_source }}
+          PRICE_VERIFIED_AT: ${{ steps.estimate-cost.outputs.price_verified_at }}
+          PRICING_BASIS: ${{ steps.estimate-cost.outputs.pricing_basis }}
+          COST_UNAVAILABLE_REASON: ${{ steps.estimate-cost.outputs.cost_unavailable_reason }}
         run: |
           mkdir -p .github/codex/output
           jq -n '{reviewed_sha:env.REVIEWED_SHA,analysis_outcome:env.ANALYSIS_OUTCOME,
@@ -584,7 +665,10 @@ jobs:
             native_benchmark_outcome:env.NATIVE_OUTCOME,
             usage_found:env.USAGE_FOUND,input_tokens:env.INPUT_TOKENS,
             cached_input_tokens:env.CACHED_INPUT_TOKENS,output_tokens:env.OUTPUT_TOKENS,
-            estimated_cost_usd:env.ESTIMATED_COST}' > .github/codex/output/analysis-status.json
+            cache_write_input_tokens:env.CACHE_WRITE_TOKENS,
+            estimated_cost_usd:env.ESTIMATED_COST,price_source:env.PRICE_SOURCE,
+            price_verified_at:env.PRICE_VERIFIED_AT,pricing_basis:env.PRICING_BASIS,
+            cost_unavailable_reason:env.COST_UNAVAILABLE_REASON}' > .github/codex/output/analysis-status.json
 
       - name: "📝 Write workflow summary"
         if: always()
@@ -602,12 +686,14 @@ jobs:
             echo "- Native benchmark: ${{ steps.native-review.outcome }}"
             echo "- Dry run: ${{ inputs.dry_run || inputs.benchmark_native }}"
             if [ "${{ steps.estimate-cost.outputs.usage_found || 'false' }}" = "true" ]; then
-              echo "- Token usage: input=${{ steps.estimate-cost.outputs.input_tokens }}, cached_input=${{ steps.estimate-cost.outputs.cached_input_tokens }}, output=${{ steps.estimate-cost.outputs.output_tokens }}, total=${{ steps.estimate-cost.outputs.total_tokens }}"
-              echo "- Estimated model cost (USD): ${{ steps.estimate-cost.outputs.estimated_cost_usd }}"
+              echo "- Token usage: input=${{ steps.estimate-cost.outputs.input_tokens }}, cached_input=${{ steps.estimate-cost.outputs.cached_input_tokens }}, cache_writes=${{ steps.estimate-cost.outputs.cache_write_input_tokens }}, output=${{ steps.estimate-cost.outputs.output_tokens }}, total=${{ steps.estimate-cost.outputs.total_tokens }}"
+              echo "- Estimated model cost (USD): ${{ steps.estimate-cost.outputs.estimated_cost_usd || 'unavailable' }}"
             else
               echo "- Token usage: unavailable"
               echo "- Estimated model cost (USD): unavailable"
             fi
+            [ -n "${{ steps.estimate-cost.outputs.cost_unavailable_reason }}" ] && echo "- Cost unavailable: ${{ steps.estimate-cost.outputs.cost_unavailable_reason }}"
+            echo "- Pricing basis: ${{ steps.estimate-cost.outputs.pricing_basis }}"
             [ -n "${{ steps.estimate-cost.outputs.price_source }}" ] && echo "- Pricing source: ${{ steps.estimate-cost.outputs.price_source }}"
             echo
           } >> "$GITHUB_STEP_SUMMARY"
