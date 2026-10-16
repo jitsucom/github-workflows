@@ -70,7 +70,8 @@ jobs:
       commit_sha: ${{ inputs.commit_sha }}
 ```
 
-Use the `review_instructions` input to focus the review on what matters for your repo:
+Use the `review_instructions` input to add repository-specific focus. It supplements the
+fixed scope and high-confidence evidence requirements; it does not replace them:
 
 ```yaml
     with:
@@ -79,6 +80,32 @@ Use the `review_instructions` input to focus the review on what matters for your
       review_instructions: >-
         Focus on infrastructure safety, Terraform drift, and secret leaks.
         Skip style nitpicks.
+```
+
+#### Review context and decisions
+
+PR reviews inspect the exact PR head, using its merge base with the base branch as the
+start of the diff. Commit reviews inspect parent-to-commit changes. The workflow prepares
+the PR title/body and paginated review threads/comments before analysis, so intentional
+tradeoffs and previous dismissal explanations are available without rediscovery.
+
+Include this optional section in the **caller repository's PR description or template**:
+
+```markdown
+## Intentional decisions and tradeoffs
+
+- Decision, why it was made, and any accepted limitation.
+- Known oddity the reviewer should understand.
+```
+
+The reviewer still checks whether the implementation achieves that intent safely.
+It omits speculative findings and avoids repeating existing findings or dismissals,
+unless new changes invalidate the dismissal. An empty review is valid.
+
+To run the context regression checks locally (Python 3, Git, Bash, and jq required):
+
+```sh
+python3 -m unittest discover -s tests -v
 ```
 
 #### Versioning
