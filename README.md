@@ -173,10 +173,10 @@ These inputs are available through `workflow_call` and manual dispatch:
 
 | Input | Default | Purpose |
 |-------|---------|---------|
-| `review_model` | `gpt-5.6-terra` | Explicit model identifier |
+| `review_model` | `gpt-6-astra` | Explicit model identifier |
 | `review_effort` | `high` | `low`, `medium`, `high`, `xhigh`, or `max`; model must support it |
 | `analysis_timeout_minutes` | `12` | Per-engine timeout; integer from 1 to 30 |
-| `codex_version` | `0.149.0` | Pinned stable CLI version; floating versions are rejected |
+| `codex_version` | `0.163.0` | Pinned stable CLI version; floating versions are rejected |
 | `incremental` | `true` | Set false to force a full comparison |
 | `review_bot_login` | `jitsu-code-review[bot]` | Trusted completion-marker author; must match the posting App |
 | `dry_run` | `false` | Validate/archive without posting or advancing coverage |
@@ -190,18 +190,18 @@ isolate prompt wording as the only variable. Both outputs are archived, includin
 `native-review.md` and `native-events.jsonl` (which includes native token usage events).
 The structured result still passes the normal validator. Benchmark failure fails the run.
 
-Example: compare a newer pinned CLI without adopting it as the production default:
+Example: compare a candidate CLI without adopting it as the production default:
 
 ```sh
 gh workflow run ai-review.yml --repo jitsucom/github-workflows --ref <candidate-branch> \
-  -f pr_number=<pr-number> -f codex_version=0.163.0 \
+  -f pr_number=<pr-number> -f codex_version=<candidate-version> \
   -f incremental=false -f dry_run=true -f benchmark_native=true
 ```
 
 For reusable callers, pass the same inputs under `with:`. Primary token usage is collected
-before the native benchmark; other models retain usage counts but have no estimated
-cost until their pricing is explicitly configured. No runtime or model default changes
-are implied by a successful benchmark. Evaluate confirmed findings, false positives,
+before the native benchmark. Cost estimation currently has rates only for Terra; the
+Astra default records usage counts without an estimated cost until its pricing is configured.
+No runtime or model default changes are implied by a successful benchmark. Evaluate confirmed findings, false positives,
 runtime and usage across representative PRs before adopting a new default.
 
 #### Versioning
