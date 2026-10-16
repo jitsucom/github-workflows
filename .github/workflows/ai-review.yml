@@ -19,7 +19,7 @@ on:
       review_model:
         description: "Explicit model for analysis and optional native benchmark."
         type: string
-        default: "gpt-5.6-terra"
+        default: "gpt-6-astra"
       review_effort:
         description: "Reasoning effort: low, medium, high, xhigh, or max."
         type: string
@@ -31,7 +31,7 @@ on:
       codex_version:
         description: "Pinned stable CLI version; candidate versions can be tested in dry runs."
         type: string
-        default: "0.149.0"
+        default: "0.163.0"
       incremental:
         description: "Review changes since the last compatible completed review."
         type: boolean
@@ -75,7 +75,7 @@ on:
       review_model:
         description: "Explicit model for analysis and optional native benchmark."
         type: string
-        default: "gpt-5.6-terra"
+        default: "gpt-6-astra"
       review_effort:
         description: "Reasoning effort: low, medium, high, xhigh, or max."
         type: string
@@ -87,7 +87,7 @@ on:
       codex_version:
         description: "Pinned stable CLI version; candidate versions can be tested in dry runs."
         type: string
-        default: "0.149.0"
+        default: "0.163.0"
       incremental:
         description: "Review changes since the last compatible completed review."
         type: boolean
@@ -135,9 +135,9 @@ jobs:
       subject_url: ${{ steps.resolve-target.outputs.subject_url }}
 
     env:
-      REVIEW_MODEL: ${{ inputs.review_model || 'gpt-5.6-terra' }}
+      REVIEW_MODEL: ${{ inputs.review_model || 'gpt-6-astra' }}
       REVIEW_EFFORT: ${{ inputs.review_effort || 'high' }}
-      CODEX_VERSION: ${{ inputs.codex_version || '0.149.0' }}
+      CODEX_VERSION: ${{ inputs.codex_version || '0.163.0' }}
       REVIEW_BOT_LOGIN: ${{ inputs.review_bot_login || 'jitsu-code-review[bot]' }}
 
     steps:
@@ -465,9 +465,8 @@ jobs:
             {"type": "object", "additionalProperties": false, "required": ["version", "reviewed_sha", "completion_status", "summary", "findings"], "properties": {"version": {"type": "integer", "enum": [1]}, "reviewed_sha": {"type": "string"}, "completion_status": {"type": "string", "enum": ["complete", "incomplete"]}, "summary": {"type": "string"}, "findings": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["priority", "title", "body", "path", "side", "start_line", "end_line"], "properties": {"priority": {"type": "string", "enum": ["P0", "P1", "P2"]}, "title": {"type": "string"}, "body": {"type": "string"}, "path": {"type": "string"}, "side": {"type": "string", "enum": ["LEFT", "RIGHT"]}, "start_line": {"type": "integer"}, "end_line": {"type": "integer"}}}}}}
           model: ${{ env.REVIEW_MODEL }}
           effort: ${{ env.REVIEW_EFFORT }}
-          # the CLI floated to npm latest too; pinned to the release verified
-          # clean with v1.11 so a CLI release can't change review behaviour
-          # under us either
+          # Keep the CLI pinned independently of the action. Version 0.163.0
+          # exited cleanly with v1.11 in structured and native review benchmarks.
           codex-version: ${{ env.CODEX_VERSION }}
           codex-home: .github/codex/home
           sandbox: danger-full-access
@@ -637,9 +636,9 @@ jobs:
       REVIEW_BASE: ${{ needs.ai-review.outputs.compare_base }}
       FULL_BASE: ${{ needs.ai-review.outputs.full_base }}
       REVIEW_PROFILE: ${{ needs.ai-review.outputs.review_profile }}
-      REVIEW_MODEL: ${{ inputs.review_model || 'gpt-5.6-terra' }}
+      REVIEW_MODEL: ${{ inputs.review_model || 'gpt-6-astra' }}
       REVIEW_EFFORT: ${{ inputs.review_effort || 'high' }}
-      CODEX_VERSION: ${{ inputs.codex_version || '0.149.0' }}
+      CODEX_VERSION: ${{ inputs.codex_version || '0.163.0' }}
       EXPECTED_BOT_LOGIN: ${{ inputs.review_bot_login || 'jitsu-code-review[bot]' }}
       REVIEW_REPO: ${{ github.workspace }}/reviewed-repo
       REVIEW_FILE: ${{ github.workspace }}/review-artifact/review.json
