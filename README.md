@@ -12,7 +12,7 @@ using [OpenAI Codex](https://openai.com/codex).
 - On **pull requests**: posts a native PR review with inline comments via a GitHub App
 - On **push to main** (commits not part of any PR): posts a review as a commit comment
 - Skips commits that already belong to an open PR (reviewed there instead)
-- Reports token usage and estimated cost in the workflow summary
+- Reports reviewed SHAs, completion/publication status, token usage, and estimated cost
 
 #### Secrets required
 
@@ -107,6 +107,45 @@ To run the context regression checks locally (Python 3, Git, Bash, and jq requir
 ```sh
 python3 -m unittest discover -s tests -v
 ```
+
+#### Analysis and publication
+
+Review runs use two separate jobs. `ai-review` has read-only GitHub permissions and
+returns a schema-constrained `review.json`; it never receives the GitHub App key or a
+posting token. Checkout credentials are not persisted. `publish-review` runs on a fresh
+runner and validates the JSON before minting the App token or posting anything.
+
+The publisher requires an explicit `complete` result for the exact reviewed SHA. Each
+finding must have a P0/P1/P2 priority and a path/side/line range within the actual Git diff.
+Deleted lines use `LEFT`; added lines use `RIGHT`. Invalid JSON, missing output, incomplete
+analysis, invalid locations, and GitHub API failures fail the workflow. A completed empty
+review is valid and is posted with `APPROVE`, matching the existing review convention.
+
+Before posting, the publisher checks that the PR is still open, ready for review, and at
+the reviewed head. Stale results are discarded and the publication job fails. Reviews
+also specify `commit_id` so any change in the narrow interval between the check and the
+POST cannot attach findings to a different commit; GitHub does not offer an atomic
+head-check-and-post operation.
+
+Per-subject concurrency covers both jobs so duplicate checks and posting are serialized.
+Finding fingerprints prevent exact duplicate comments from this review bot, including
+when lines move. Identical review results are idempotent on reruns. Existing legacy
+comments and semantic duplicates are handled by the analysis prompt's thread history;
+fingerprint checks do not attempt to infer whether differently worded findings describe
+the same bug. Commit mode posts one consolidated comment, with rerun deduplication.
+
+Artifacts are named with both run ID and run attempt. The publisher uses the artifact
+name exported by analysis, including when only failed jobs are rerun:
+
+- `ai-review-log-*`: `review.json` when available, diff files/statistics, and
+  `analysis-status.json` with the analysis outcome, pinned model/effort/runtime, and usage.
+- `ai-review-publication-*`: `status.json` recording validation/publication outcome and
+  reviewed SHA, including failures. An unsuccessful API request leaves publication
+  unconfirmed, since a failed POST may still have reached GitHub; reruns check markers
+  before posting again. Publication is never inferred from an APPROVE badge.
+
+Only data is read from the analysis artifact; publisher code comes from the workflow.
+The model, reasoning effort, and CLI/action pins remain unchanged by this separation.
 
 #### Versioning
 

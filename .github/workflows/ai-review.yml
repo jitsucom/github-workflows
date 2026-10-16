@@ -44,6 +44,11 @@ on:
 env:
   REVIEW_INSTRUCTIONS: ${{ inputs.review_instructions || '' }}
 
+# Serialize the complete analysis/publication pipeline, including duplicate checks.
+concurrency:
+  group: ai-review-pipeline-${{ github.repository }}-${{ github.event.pull_request.number || inputs.pr_number || inputs.commit_sha || github.sha }}
+  cancel-in-progress: false
+
 jobs:
   ai-review:
     if: |
@@ -52,17 +57,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
-    # Concurrency key uses the actual subject being reviewed (PR number or commit SHA),
-    # not github.sha (which is the same for all dispatch runs on the same branch).
-    # cancel-in-progress: false means a second dispatch for the same subject queues
-    # rather than cancelling the running review.
-    concurrency:
-      group: ai-review-${{ github.event.pull_request.number || inputs.pr_number || inputs.commit_sha || github.sha }}
-      cancel-in-progress: false
-
     permissions:
-      contents: write
+      contents: read
       pull-requests: read
+    outputs:
+      analysis_artifact: ai-review-log-${{ github.run_id }}-${{ github.run_attempt }}
+      review_mode: ${{ steps.resolve-target.outputs.review_mode }}
+      pr_number: ${{ steps.resolve-target.outputs.pr_number }}
+      compare_head: ${{ steps.resolve-target.outputs.compare_head }}
+      compare_base: ${{ steps.prepare-context.outputs.compare_base }}
+      subject_url: ${{ steps.resolve-target.outputs.subject_url }}
 
     steps:
       - name: "🧭 Resolve review target"
@@ -159,8 +163,10 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ steps.resolve-target.outputs.compare_head }}
+          persist-credentials: false
 
       - name: "🧾 Prepare review context"
+        id: prepare-context
         if: ${{ steps.resolve-target.outputs.review_mode != 'skip' }}
         env:
           GH_TOKEN: ${{ github.token }}
@@ -175,12 +181,13 @@ jobs:
           set -euo pipefail
           mkdir -p .github/codex/context .github/codex/output
 
-          git fetch --no-tags origin "$COMPARE_BASE" "$COMPARE_HEAD"
+          git -c credential.helper= -c 'credential.helper=!gh auth git-credential' fetch --no-tags origin "$COMPARE_BASE" "$COMPARE_HEAD"
           test "$(git rev-parse HEAD)" = "$COMPARE_HEAD"
           BASE_TIP="$COMPARE_BASE"
           if [ "$REVIEW_MODE" = "pr" ]; then
             COMPARE_BASE=$(git merge-base "$BASE_TIP" "$COMPARE_HEAD")
           fi
+          echo "compare_base=$COMPARE_BASE" >> "$GITHUB_OUTPUT"
           git diff --stat "$COMPARE_BASE" "$COMPARE_HEAD" | tee .github/codex/output/diff-stat.txt
           git diff --name-only "$COMPARE_BASE" "$COMPARE_HEAD" | tee .github/codex/output/diff-files.txt
 
@@ -247,14 +254,13 @@ jobs:
           - Intentional tradeoffs are context, not immunity: distinguish an intended behavior change from a defect in its implementation.
 
           Execution mode:
-          - If `review_mode` is `pr`, post a native PR review directly to GitHub.
-          - If `review_mode` is `commit`, do not post to GitHub; write one markdown file for the workflow to post as a consolidated commit comment.
-
-          GitHub communication:
-          - Authentication is pre-configured with `GH_TOKEN`.
-          - You may use GitHub CLI (`gh`) or direct HTTPS requests to GitHub API.
-          - If using direct HTTPS requests, use `Authorization: Bearer $GH_TOKEN`.
-          - Choose the method that is most reliable for completing the task.
+          - Analyze only. Do not post reviews or comments, call GitHub write APIs, or edit code.
+          - Return one JSON object matching the supplied output schema as your final answer. The action saves it; do not write the output file yourself.
+          - Set version to 1 and reviewed_sha to the recorded compare_head.
+          - Set completion_status to complete only after the entire supplied diff has been reviewed. Use incomplete if a timeout, missing context, or other limitation prevented completion, and explain in summary.
+          - findings may be empty after a completed review. Never use an empty list to conceal an incomplete review.
+          - Each finding needs priority (P0/P1/P2), title, body, path, side (LEFT for deleted lines or RIGHT for added lines), start_line, and end_line. Use a minimal range of at most 10 changed lines in a single diff hunk. Describe evidence and impact in body.
+          - Do not include @mentions or HTML publisher markers in text.
 
           Review process:
 
@@ -265,62 +271,10 @@ jobs:
           5. An empty findings list is valid. If no high-confidence defects remain, say so briefly. Keep feedback concise; include priority, a changed-line location, and an explanation of the failure and impact for each finding.
           6. Never call this review "WIP", "draft", or "preliminary". Do not edit source code.
 
-          If `review_mode` is `pr`:
-          1. Use the prepared thread history to avoid repeating unresolved findings or previously dismissed findings. Re-raise a dismissed finding only if new changes invalidate its dismissal, and explain that new evidence.
-          2. Always post the review with `event=APPROVE`. Use this event regardless of how many findings you have — even when you surface bugs, security issues, or regressions. The approval is not a judgment that the code is flawless; it only means the review is not blocking the merge.
-          3. Surface all of your findings as inline comments on the relevant lines so the author sees them. Post as many comments as the change warrants — do not hold back findings just because the verdict is APPROVE. Say plainly in each comment when something looks like a bug and why.
-          4. Never post `event=REQUEST_CHANGES` or `event=COMMENT`. The verdict is always APPROVE; the findings live in the inline comments and summary, not in the event type.
-          5. Do not post questions as a substitute for validating a finding. Apply the same high-confidence evidence standard to every inline comment.
-          6. Post the PR review directly to GitHub (do not delegate posting to workflow wrapper logic). Include a short summary and inline comments. The summary should describe what you looked at and list the findings briefly — do not frame it as "blocking" or "approving the merge".
-
-          If `review_mode` is `commit`:
-          1. Write `.github/codex/output/review.md`.
-          2. Use valid, readable markdown.
-          3. Keep it concise and actionable.
+          Use the prepared thread history to avoid repeating unresolved findings or previously dismissed findings. Re-raise a dismissed finding only if new changes invalidate its dismissal, and explain that new evidence.
 
           Never use or mention "WIP".
           PROMPT_EOF
-
-      # PR mode requires a GitHub App with repo access and Pull requests: Read & write.
-      # Create app: https://github.com/organizations/jitsucom/settings/apps/new
-      # Install app to org/repo: https://github.com/settings/installations
-      # App settings page (replace APP_SLUG): https://github.com/settings/apps/APP_SLUG
-      # Generate private key in app settings, then store these repo/org secrets:
-      # - AI_CODE_REVIEW_APP_ID (App ID from app settings)
-      # - AI_CODE_REVIEW_PRIVATE_KEY (contents of downloaded .pem private key)
-      # Example CLI (org secrets, grant access to selected repos):
-      #   gh secret set AI_CODE_REVIEW_APP_ID --org jitsucom --repos jitsu --body "<app-id>"
-      #   gh secret set AI_CODE_REVIEW_PRIVATE_KEY --org jitsucom --repos jitsu < app-private-key.pem
-      - name: "🔐 Check required secrets"
-        if: ${{ steps.resolve-target.outputs.review_mode != 'skip' }}
-        env:
-          REVIEW_MODE: ${{ steps.resolve-target.outputs.review_mode }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          AI_CODE_REVIEW_APP_ID: ${{ secrets.AI_CODE_REVIEW_APP_ID }}
-          AI_CODE_REVIEW_PRIVATE_KEY: ${{ secrets.AI_CODE_REVIEW_PRIVATE_KEY }}
-        run: |
-          set -euo pipefail
-          if [ -z "${OPENAI_API_KEY:-}" ]; then
-            echo "OPENAI_API_KEY secret is empty or unavailable to this workflow run." >&2
-            exit 1
-          fi
-          if [ "$REVIEW_MODE" = "pr" ]; then
-            if [ -z "${AI_CODE_REVIEW_APP_ID:-}" ] || [ -z "${AI_CODE_REVIEW_PRIVATE_KEY:-}" ]; then
-              echo "PR mode requires AI_CODE_REVIEW_APP_ID and AI_CODE_REVIEW_PRIVATE_KEY secrets." >&2
-              exit 1
-            fi
-          fi
-          echo "Required secrets are present for mode: $REVIEW_MODE"
-
-      - name: "🔑 Generate GitHub App token for PR review"
-        if: ${{ steps.resolve-target.outputs.review_mode == 'pr' }}
-        id: app-token
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ secrets.AI_CODE_REVIEW_APP_ID }}
-          private-key: ${{ secrets.AI_CODE_REVIEW_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ github.event.repository.name }}
 
       - name: "🤖 Run Codex analysis"
         if: ${{ steps.resolve-target.outputs.review_mode != 'skip' }}
@@ -330,7 +284,6 @@ jobs:
           REVIEW_MODE: ${{ steps.resolve-target.outputs.review_mode }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ steps.resolve-target.outputs.pr_number }}
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         # Pinned to the v1.11 commit, not the floating v1 tag: v1.12 (2026-08-20)
         # rewrote the Linux launch path and the step never returns after a heavy
         # turn — every caller's review died on the job timeout with the result
@@ -340,7 +293,9 @@ jobs:
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           prompt-file: .github/workflows/ai-review.prompt.md
-          output-file: .github/codex/output/codex-final-message.md
+          output-file: .github/codex/output/review.json
+          output-schema: >-
+            {"type": "object", "additionalProperties": false, "required": ["version", "reviewed_sha", "completion_status", "summary", "findings"], "properties": {"version": {"type": "integer", "enum": [1]}, "reviewed_sha": {"type": "string"}, "completion_status": {"type": "string", "enum": ["complete", "incomplete"]}, "summary": {"type": "string"}, "findings": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["priority", "title", "body", "path", "side", "start_line", "end_line"], "properties": {"priority": {"type": "string", "enum": ["P0", "P1", "P2"]}, "title": {"type": "string"}, "body": {"type": "string"}, "path": {"type": "string"}, "side": {"type": "string", "enum": ["LEFT", "RIGHT"]}, "start_line": {"type": "integer"}, "end_line": {"type": "integer"}}}}}}
           model: gpt-5.6-terra
           effort: high
           # the CLI floated to npm latest too; pinned to the release verified
@@ -357,16 +312,8 @@ jobs:
           # token, so it is repo-internal automation, not an external actor.
           allow-bots: true
 
-      - name: "✅ Validate review output"
-        if: ${{ steps.resolve-target.outputs.review_mode == 'commit' }}
-        id: validate-review
-        run: |
-          set -euo pipefail
-          test -f .github/codex/output/review.md
-          test -s .github/codex/output/review.md
-
       - name: "💰 Estimate token usage and cost"
-        if: ${{ steps.resolve-target.outputs.review_mode != 'skip' }}
+        if: ${{ always() && steps.resolve-target.outputs.review_mode != 'skip' }}
         id: estimate-cost
         env:
           CODEX_HOME: .github/codex/home
@@ -413,7 +360,7 @@ jobs:
           COST_USD=$(awk -v i="$INPUT_TOKENS" -v ci="$CACHED_INPUT_TOKENS" -v o="$OUTPUT_TOKENS" \
             -v pi="$PRICE_INPUT_PER_M" -v pci="$PRICE_CACHED_INPUT_PER_M" -v po="$PRICE_OUTPUT_PER_M" \
             'BEGIN {
-               cost = (i/1000000.0)*pi + (ci/1000000.0)*pci + (o/1000000.0)*po;
+               cost = ((i-ci)/1000000.0)*pi + (ci/1000000.0)*pci + (o/1000000.0)*po;
                printf "%.6f", cost
              }')
 
@@ -427,18 +374,23 @@ jobs:
           echo "Token usage: input=$INPUT_TOKENS cached_input=$CACHED_INPUT_TOKENS output=$OUTPUT_TOKENS total=$TOTAL_TOKENS"
           echo "Estimated run cost (USD): $COST_USD"
 
-      - name: "💬 Post commit review comments"
-        if: ${{ steps.resolve-target.outputs.review_mode == 'commit' }}
+      - name: "🧾 Record analysis status"
+        if: ${{ always() && steps.resolve-target.outputs.review_mode != 'skip' }}
         env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          COMMIT_SHA: ${{ steps.resolve-target.outputs.commit_sha }}
+          REVIEWED_SHA: ${{ steps.resolve-target.outputs.compare_head }}
+          ANALYSIS_OUTCOME: ${{ steps.run-codex.outcome }}
+          USAGE_FOUND: ${{ steps.estimate-cost.outputs.usage_found }}
+          INPUT_TOKENS: ${{ steps.estimate-cost.outputs.input_tokens }}
+          CACHED_INPUT_TOKENS: ${{ steps.estimate-cost.outputs.cached_input_tokens }}
+          OUTPUT_TOKENS: ${{ steps.estimate-cost.outputs.output_tokens }}
+          ESTIMATED_COST: ${{ steps.estimate-cost.outputs.estimated_cost_usd }}
         run: |
-          set -euo pipefail
-          jq -n --rawfile body .github/codex/output/review.md '{body: $body}' > /tmp/commit-comment.json
-          gh api "repos/$REPO/commits/$COMMIT_SHA/comments" \
-            --method POST \
-            --input /tmp/commit-comment.json
+          mkdir -p .github/codex/output
+          jq -n '{reviewed_sha:env.REVIEWED_SHA,analysis_outcome:env.ANALYSIS_OUTCOME,
+            model:"gpt-5.6-terra",effort:"high",codex_version:"0.149.0",
+            usage_found:env.USAGE_FOUND,input_tokens:env.INPUT_TOKENS,
+            cached_input_tokens:env.CACHED_INPUT_TOKENS,output_tokens:env.OUTPUT_TOKENS,
+            estimated_cost_usd:env.ESTIMATED_COST}' > .github/codex/output/analysis-status.json
 
       - name: "📝 Write workflow summary"
         if: always()
@@ -449,7 +401,8 @@ jobs:
             echo "- Subject: ${{ steps.resolve-target.outputs.subject_url }}"
             echo "- Mode: ${{ steps.resolve-target.outputs.review_mode }}"
             [ -n "${{ steps.resolve-target.outputs.skip_reason }}" ] && echo "- Skip reason: ${{ steps.resolve-target.outputs.skip_reason }}"
-            echo "- Review output: review.md"
+            echo "- Analysis outcome: ${{ steps.run-codex.outcome }}"
+            echo "- Review output: review.json (validated and published in a separate job)"
             echo "- Model: ${{ steps.estimate-cost.outputs.model || 'n/a' }}"
             if [ "${{ steps.estimate-cost.outputs.usage_found || 'false' }}" = "true" ]; then
               echo "- Token usage: input=${{ steps.estimate-cost.outputs.input_tokens }}, cached_input=${{ steps.estimate-cost.outputs.cached_input_tokens }}, output=${{ steps.estimate-cost.outputs.output_tokens }}, total=${{ steps.estimate-cost.outputs.total_tokens }}"
@@ -460,15 +413,275 @@ jobs:
             fi
             [ -n "${{ steps.estimate-cost.outputs.price_source }}" ] && echo "- Pricing source: ${{ steps.estimate-cost.outputs.price_source }}"
             echo
-            if [ -f .github/codex/output/review.md ]; then
-              cat .github/codex/output/review.md
-            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: "📦 Upload review log"
         if: ${{ always() && steps.resolve-target.outputs.review_mode != 'skip' }}
         uses: actions/upload-artifact@v4
         with:
-          name: ai-review-log-${{ github.run_id }}
+          name: ai-review-log-${{ github.run_id }}-${{ github.run_attempt }}
           path: .github/codex/output
+          retention-days: 30
+
+  publish-review:
+    needs: ai-review
+    if: ${{ needs.ai-review.result == 'success' && needs.ai-review.outputs.review_mode != 'skip' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # Commit comments only; analysis has no write permission.
+      pull-requests: read
+    env:
+      REPO: ${{ github.repository }}
+      REVIEW_MODE: ${{ needs.ai-review.outputs.review_mode }}
+      PR_NUMBER: ${{ needs.ai-review.outputs.pr_number }}
+      REVIEW_HEAD: ${{ needs.ai-review.outputs.compare_head }}
+      REVIEW_BASE: ${{ needs.ai-review.outputs.compare_base }}
+      REVIEW_REPO: ${{ github.workspace }}/reviewed-repo
+      REVIEW_FILE: ${{ github.workspace }}/review-artifact/review.json
+      STATUS_FILE: ${{ github.workspace }}/publication/status.json
+
+    steps:
+      # Never run scripts from the PR checkout or from the downloaded artifact.
+      - name: "📥 Checkout reviewed tree for line validation"
+        uses: actions/checkout@v5.0.0
+        with:
+          ref: ${{ needs.ai-review.outputs.compare_head }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: reviewed-repo
+
+      - name: "📦 Download analysis output"
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.ai-review.outputs.analysis_artifact }}
+          path: review-artifact
+
+      - name: "🛠️ Write trusted publisher"
+        run: |
+          mkdir -p publication
+          cat > publication/publish.py <<'PYTHON_EOF'
+          """Validate untrusted review data and publish it; never execute artifact contents."""
+          import ast
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+          import sys
+
+
+          def api(endpoint, payload=None, paginate=False):
+              args = ['gh', 'api', endpoint]
+              if paginate:
+                  args += ['--paginate', '--slurp']
+              if payload is not None:
+                  args += ['--method', 'POST', '--input', '-']
+              result = subprocess.run(args, input=json.dumps(payload) if payload is not None else None,
+                                      text=True, capture_output=True, check=True)
+              value = json.loads(result.stdout)
+              return [item for page in value for item in page] if paginate else value
+
+
+          def git(*args):
+              return subprocess.check_output(['git', '--no-pager', *args], cwd=os.environ['REVIEW_REPO'], text=True)
+
+
+          def text(value, limit):
+              if not isinstance(value, str) or not value.strip() or len(value) > limit or '\x00' in value:
+                  raise ValueError('Missing, empty, or oversized review text')
+              # Prevent review-generated notifications and forged publisher metadata.
+              if '<!-- ai-review' in value or re.search(r'(?<![\w@])@[\w-]+', value):
+                  raise ValueError('Review text contains mentions or reserved publisher markers')
+              return value
+
+
+          def changed_lines(base, head):
+              # Match the rename-aware diff shown to analysis and GitHub. Parse the full
+              # patch so old/new paths stay paired even when another file reuses a name.
+              paths = set(git('diff', '--find-renames', '--name-only', '-z', base, head).split('\x00')) - {''}
+              ranges = {path: {'LEFT': [], 'RIGHT': []} for path in paths}
+              patch = git('-c', 'core.quotePath=false', 'diff', '--no-ext-diff', '--no-textconv',
+                          '--find-renames', '--unified=0', base, head)
+              current, old, headers = None, None, False
+              for line in patch.splitlines():
+                  if line.startswith('diff --git '):
+                      current, old, headers = None, None, True
+                  elif headers and line.startswith(('--- ', '+++ ')):
+                      raw = line[4:]
+                      path = ast.literal_eval(raw) if raw.startswith('"') else raw.removesuffix('\t')
+                      path = None if path == '/dev/null' else path[2:]
+                      if line.startswith('--- '):
+                          old = path
+                      else:
+                          current = path or old
+                  elif line.startswith('@@ '):
+                      headers = False
+                      match = re.match(r'^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@', line)
+                      if current not in ranges or not match:
+                          raise ValueError('Cannot map diff hunk to reviewed file')
+                      old, old_n, new, new_n = match.groups()
+                      for side, start, n in [('LEFT', old, old_n), ('RIGHT', new, new_n)]:
+                          n = int(n) if n else 1
+                          if n:
+                              ranges[current][side].append((int(start), int(start) + n - 1))
+              return ranges
+
+
+          def validate(data, head, base):
+              if not isinstance(data, dict) or set(data) != {'version', 'reviewed_sha', 'completion_status', 'summary', 'findings'}:
+                  raise ValueError('Invalid review object fields')
+              if type(data['version']) is not int or data['version'] != 1 or data['reviewed_sha'] != head:
+                  raise ValueError('Review version or reviewed SHA mismatch')
+              if data['completion_status'] != 'complete':
+                  raise ValueError('Analysis did not complete')
+              text(data['summary'], 12000)
+              if not isinstance(data['findings'], list) or len(data['findings']) > 100:
+                  raise ValueError('Expected at most 100 findings')
+              ranges = changed_lines(base, head)
+              seen = set()
+              findings = []
+              for f in data['findings']:
+                  if not isinstance(f, dict) or set(f) != {'priority', 'title', 'body', 'path', 'side', 'start_line', 'end_line'}:
+                      raise ValueError('Invalid finding fields')
+                  if f['priority'] not in ('P0', 'P1', 'P2') or f['side'] not in ('LEFT', 'RIGHT'):
+                      raise ValueError('Invalid priority or diff side')
+                  if not isinstance(f['path'], str) or f['path'] not in ranges:
+                      raise ValueError('Finding path is not in the reviewed diff')
+                  start, end = f['start_line'], f['end_line']
+                  if type(start) is not int or type(end) is not int or not 1 <= start <= end <= start + 9:
+                      raise ValueError('Invalid finding line range')
+                  if not any(lo <= start <= end <= hi for lo, hi in ranges[f['path']][f['side']]):
+                      raise ValueError('Finding line range is outside changed lines')
+                  title, body = text(f['title'], 200), text(f['body'], 6000)
+                  canonical = '\n'.join((f['path'], f['priority'], ' '.join(title.split()), ' '.join(body.split())))
+                  fingerprint = hashlib.sha256(canonical.encode()).hexdigest()
+                  if fingerprint in seen:
+                      continue
+                  seen.add(fingerprint)
+                  findings.append(dict(f, fingerprint=fingerprint))
+              return findings
+
+
+          def marker(f):
+              return '<!-- ai-review-finding:' + f['fingerprint'] + ' -->'
+
+
+          def comment_body(f):
+              return f"[{f['priority']}] {f['title']}\n\n{f['body']}\n\n{marker(f)}"
+
+
+          def publish(data, findings, repo, mode, subject, head):
+              digest = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
+              review_marker = f'<!-- ai-review:{head}:{digest} -->'
+              summary = f"Review of `{head}`\n\n{data['summary']}\n\n{review_marker}"
+              if mode == 'pr':
+                  endpoint = f'repos/{repo}/pulls/{subject}'
+                  comments = api(endpoint + '/comments?per_page=100', paginate=True)
+                  reviews = api(endpoint + '/reviews?per_page=100', paginate=True)
+                  login = os.environ['REVIEW_BOT_LOGIN']
+                  own_comments = [c for c in comments if (c.get('user') or {}).get('login') == login]
+                  own_reviews = [r for r in reviews if (r.get('user') or {}).get('login') == login]
+                  fresh = [f for f in findings if not any(marker(f) in c['body'] for c in own_comments)]
+                  # Check after fetching history, immediately before any publication.
+                  current = api(endpoint)
+                  if current['state'] != 'open' or current['draft'] or current['head']['sha'] != head:
+                      raise ValueError('PR closed, draft, or changed head; stale review discarded')
+                  if any(review_marker in (r.get('body') or '') for r in own_reviews) or (findings and not fresh):
+                      return 'duplicate', 0
+                  inline = []
+                  for f in fresh:
+                      c = {'path': f['path'], 'side': f['side'], 'line': f['end_line'], 'body': comment_body(f)}
+                      if f['start_line'] != f['end_line']:
+                          c.update(start_line=f['start_line'], start_side=f['side'])
+                      inline.append(c)
+                  result = api(endpoint + '/reviews', {'commit_id': head, 'event': 'APPROVE', 'body': summary, 'comments': inline})
+                  return 'published', len(inline)
+              endpoint = f'repos/{repo}/commits/{head}/comments'
+              comments = api(endpoint + '?per_page=100', paginate=True)
+              if any(review_marker in c['body'] and c['user']['login'] == 'github-actions[bot]' for c in comments):
+                  return 'duplicate', 0
+              body = summary + ''.join('\n\n' + comment_body(f) + f"\n\n`{f['path']}:{f['start_line']}-{f['end_line']}` ({f['side']})" for f in findings)
+              if len(body) > 60000:
+                  raise ValueError('Commit review exceeds comment size limit')
+              api(endpoint, {'body': body})
+              return 'published', len(findings)
+
+
+          def main():
+              status = {'completion_status': 'failed', 'publication_status': 'not_posted',
+                        'reviewed_sha': os.environ['REVIEW_HEAD'], 'model': 'gpt-5.6-terra', 'effort': 'high'}
+              try:
+                  head, base = os.environ['REVIEW_HEAD'], os.environ['REVIEW_BASE']
+                  if not re.fullmatch(r'[0-9a-f]{40}', head) or not re.fullmatch(r'[0-9a-f]{40}', base):
+                      raise ValueError('Expected resolved commit SHAs')
+                  if git('rev-parse', 'HEAD').strip() != head:
+                      raise ValueError('Publisher checkout differs from reviewed head')
+                  data = json.loads(Path(os.environ['REVIEW_FILE']).read_text())
+                  findings = validate(data, head, base)
+                  status['completion_status'] = 'complete'
+                  status['validated_findings'] = len(findings)
+                  if os.environ.get('VALIDATE_ONLY') == 'true':
+                      status['publication_status'] = 'validated'
+                  else:
+                      # A failed POST may have reached GitHub; a rerun checks markers.
+                      status['publication_status'] = 'unconfirmed'
+                      state, count = publish(data, findings, os.environ['REPO'], os.environ['REVIEW_MODE'],
+                                             os.environ.get('PR_NUMBER', ''), head)
+                      status.update(publication_status=state, posted_findings=count)
+              except (ValueError, KeyError, TypeError, OSError, subprocess.CalledProcessError) as exc:
+                  # Do not copy untrusted artifact text or raw authenticated subprocess output into logs.
+                  status['error'] = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
+                  raise
+              finally:
+                  Path(os.environ['STATUS_FILE']).write_text(json.dumps(status, indent=2) + '\n')
+
+
+          if __name__ == '__main__':
+              main()
+          PYTHON_EOF
+
+      - name: "✅ Validate completed review and changed-line locations"
+        env:
+          VALIDATE_ONLY: "true"
+        run: python3 publication/publish.py
+
+      # Mint posting credentials only after validation, on a runner that never ran Codex.
+      - name: "🔑 Generate GitHub App token for PR review"
+        if: ${{ env.REVIEW_MODE == 'pr' }}
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.AI_CODE_REVIEW_APP_ID }}
+          private-key: ${{ secrets.AI_CODE_REVIEW_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+
+      - name: "💬 Publish validated review"
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+          REVIEW_BOT_LOGIN: ${{ steps.app-token.outputs.app-slug }}[bot]
+        run: python3 publication/publish.py
+
+      - name: "📝 Write publication summary"
+        if: always()
+        run: |
+          {
+            echo "## Review publication"
+            if [ -f publication/status.json ]; then
+              echo '```json'
+              cat publication/status.json
+              echo '```'
+            else
+              echo "Publication did not complete; see failed step."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: "📦 Upload publication status"
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-review-publication-${{ github.run_id }}-${{ github.run_attempt }}
+          path: publication/status.json
           retention-days: 30
