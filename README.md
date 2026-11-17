@@ -178,10 +178,10 @@ These inputs are available through `workflow_call` and manual dispatch:
 
 | Input | Default | Purpose |
 |-------|---------|---------|
-| `review_model` | `gpt-6-astra` | Explicit model identifier |
+| `review_model` | `gpt-6.2-sol` | Explicit model identifier |
 | `review_effort` | `high` | `low`, `medium`, `high`, `xhigh`, or `max`; model must support it |
 | `analysis_timeout_minutes` | `12` | Per-engine timeout; integer from 1 to 30 |
-| `codex_version` | `0.163.0` | Pinned stable CLI version; floating versions are rejected |
+| `codex_version` | `0.169.0` | Pinned stable CLI version; floating versions are rejected |
 | `incremental` | `true` | Set false to force a full comparison |
 | `review_bot_login` | `jitsu-code-review[bot]` | Trusted completion-marker author; must match the posting App |
 | `dry_run` | `false` | Validate/archive without posting or advancing coverage |
@@ -205,8 +205,8 @@ gh workflow run ai-review.yml --repo jitsucom/github-workflows --ref <candidate-
 
 For reusable callers, pass the same inputs under `with:`. Primary token usage is collected
 before the native benchmark. The workflow's `PRICES` dictionary contains standard text-token
-rates for all 47 models in the official flagship, legacy text, cyber, life sciences, and
-specialized text pricing tables, verified on 2026-10-16. This includes Astra, Sol 6.1,
+rates for the 47 models in the official flagship, legacy text, cyber, life sciences, and
+specialized text pricing tables, verified on 2026-10-16, plus GPT-6.2 Sol verified on 2026-11-18. This includes Astra, Sol 6.1,
 Sol 6, Luna 6, the 5.6 family, and GPT-5.3-Codex. A price entry does not imply that a model
 supports the Codex review command; model compatibility still needs to be checked separately.
 

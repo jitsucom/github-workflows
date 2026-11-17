@@ -19,7 +19,7 @@ on:
       review_model:
         description: "Explicit model for analysis and optional native benchmark."
         type: string
-        default: "gpt-6-astra"
+        default: "gpt-6.2-sol"
       review_effort:
         description: "Reasoning effort: low, medium, high, xhigh, or max."
         type: string
@@ -31,7 +31,7 @@ on:
       codex_version:
         description: "Pinned stable CLI version; candidate versions can be tested in dry runs."
         type: string
-        default: "0.163.0"
+        default: "0.169.0"
       incremental:
         description: "Review changes since the last compatible completed review."
         type: boolean
@@ -75,7 +75,7 @@ on:
       review_model:
         description: "Explicit model for analysis and optional native benchmark."
         type: string
-        default: "gpt-6-astra"
+        default: "gpt-6.2-sol"
       review_effort:
         description: "Reasoning effort: low, medium, high, xhigh, or max."
         type: string
@@ -87,7 +87,7 @@ on:
       codex_version:
         description: "Pinned stable CLI version; candidate versions can be tested in dry runs."
         type: string
-        default: "0.163.0"
+        default: "0.169.0"
       incremental:
         description: "Review changes since the last compatible completed review."
         type: boolean
@@ -135,9 +135,9 @@ jobs:
       subject_url: ${{ steps.resolve-target.outputs.subject_url }}
 
     env:
-      REVIEW_MODEL: ${{ inputs.review_model || 'gpt-6-astra' }}
+      REVIEW_MODEL: ${{ inputs.review_model || 'gpt-6.2-sol' }}
       REVIEW_EFFORT: ${{ inputs.review_effort || 'high' }}
-      CODEX_VERSION: ${{ inputs.codex_version || '0.163.0' }}
+      CODEX_VERSION: ${{ inputs.codex_version || '0.169.0' }}
       REVIEW_BOT_LOGIN: ${{ inputs.review_bot_login || 'jitsu-code-review[bot]' }}
 
     steps:
@@ -468,8 +468,7 @@ jobs:
             {"type": "object", "additionalProperties": false, "required": ["version", "reviewed_sha", "completion_status", "summary", "findings"], "properties": {"version": {"type": "integer", "enum": [1]}, "reviewed_sha": {"type": "string"}, "completion_status": {"type": "string", "enum": ["complete", "incomplete"]}, "summary": {"type": "string"}, "findings": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["priority", "title", "body", "path", "side", "start_line", "end_line"], "properties": {"priority": {"type": "string", "enum": ["P0", "P1", "P2"]}, "title": {"type": "string"}, "body": {"type": "string"}, "path": {"type": "string"}, "side": {"type": "string", "enum": ["LEFT", "RIGHT"]}, "start_line": {"type": "integer"}, "end_line": {"type": "integer"}}}}}}
           model: ${{ env.REVIEW_MODEL }}
           effort: ${{ env.REVIEW_EFFORT }}
-          # Keep the CLI pinned independently of the action. Version 0.163.0
-          # exited cleanly with v1.11 in structured and native review benchmarks.
+          # Pin the CLI independently of the action.
           codex-version: ${{ env.CODEX_VERSION }}
           codex-home: .github/codex/home
           sandbox: danger-full-access
@@ -499,6 +498,7 @@ jobs:
           # Order: uncached input, cached input, cache writes, output.
           PRICES = {
               'gpt-6-astra': (D("10.00"), D("1.00"), D("12.50"), D("50.00")),
+              'gpt-6.2-sol': (D("2.00"), D("0.10"), D("2.50"), D("10.00")),
               'gpt-6.1-sol': (D("2.00"), D("0.10"), D("2.50"), D("10.00")),
               'gpt-6-luna': (D("0.10"), D("0.01"), D("0.125"), D("0.50")),
               'gpt-6-sol': (D("2.00"), D("0.20"), D("2.50"), D("10.00")),
@@ -548,7 +548,7 @@ jobs:
           }
           # Above 272K input tokens, the full request costs 2x input/cache and 1.5x output.
           LONG_CONTEXT_MODELS = {
-              'gpt-6-astra', 'gpt-6.1-sol', 'gpt-6-sol', 'gpt-6-luna',
+              'gpt-6-astra', 'gpt-6.2-sol', 'gpt-6.1-sol', 'gpt-6-sol', 'gpt-6-luna',
               'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna',
               'gpt-5.5', 'gpt-5.5-pro', 'gpt-5.4', 'gpt-5.4-pro',
           }
@@ -556,7 +556,7 @@ jobs:
           model = os.environ['MODEL']
           result = {'model': model, 'usage_found': 'false', 'estimated_cost_usd': '',
                     'price_source': 'https://developers.openai.com/api/docs/pricing' if model in PRICES else '',
-                    'price_verified_at': '2026-10-16' if model in PRICES else '',
+                    'price_verified_at': '2026-11-18' if model == 'gpt-6.2-sol' else '2026-10-16' if model in PRICES else '',
                     'pricing_basis': 'standard text tokens; excludes tools, regional and service-tier uplifts'}
           home = Path(os.environ['CODEX_HOME'])
           sessions = list(home.rglob('*.jsonl'))
@@ -725,9 +725,9 @@ jobs:
       REVIEW_BASE: ${{ needs.ai-review.outputs.compare_base }}
       FULL_BASE: ${{ needs.ai-review.outputs.full_base }}
       REVIEW_PROFILE: ${{ needs.ai-review.outputs.review_profile }}
-      REVIEW_MODEL: ${{ inputs.review_model || 'gpt-6-astra' }}
+      REVIEW_MODEL: ${{ inputs.review_model || 'gpt-6.2-sol' }}
       REVIEW_EFFORT: ${{ inputs.review_effort || 'high' }}
-      CODEX_VERSION: ${{ inputs.codex_version || '0.163.0' }}
+      CODEX_VERSION: ${{ inputs.codex_version || '0.169.0' }}
       EXPECTED_BOT_LOGIN: ${{ inputs.review_bot_login || 'jitsu-code-review[bot]' }}
       REVIEW_REPO: ${{ github.workspace }}/reviewed-repo
       REVIEW_FILE: ${{ github.workspace }}/review-artifact/review.json
