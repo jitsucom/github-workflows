@@ -116,7 +116,7 @@ else:
         self.assertIn('Re-raise a dismissed finding only if new changes invalidate', prompt)
         self.assertNotIn('still prefer to post it', prompt)
         self.assertIn("REVIEW_MODEL: ${{ inputs.review_model || 'gpt-6.2-sol' }}", text)
-        self.assertIn("CODEX_VERSION: ${{ inputs.codex_version || '0.169.0' }}", text)
+        self.assertIn("CODEX_VERSION: ${{ inputs.codex_version || '0.170.0' }}", text)
 
 
 if __name__ == '__main__':

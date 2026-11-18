@@ -31,7 +31,7 @@ on:
       codex_version:
         description: "Pinned stable CLI version; candidate versions can be tested in dry runs."
         type: string
-        default: "0.169.0"
+        default: "0.170.0"
       incremental:
         description: "Review changes since the last compatible completed review."
         type: boolean
@@ -87,7 +87,7 @@ on:
       codex_version:
         description: "Pinned stable CLI version; candidate versions can be tested in dry runs."
         type: string
-        default: "0.169.0"
+        default: "0.170.0"
       incremental:
         description: "Review changes since the last compatible completed review."
         type: boolean
@@ -137,7 +137,7 @@ jobs:
     env:
       REVIEW_MODEL: ${{ inputs.review_model || 'gpt-6.2-sol' }}
       REVIEW_EFFORT: ${{ inputs.review_effort || 'high' }}
-      CODEX_VERSION: ${{ inputs.codex_version || '0.169.0' }}
+      CODEX_VERSION: ${{ inputs.codex_version || '0.170.0' }}
       REVIEW_BOT_LOGIN: ${{ inputs.review_bot_login || 'jitsu-code-review[bot]' }}
 
     steps:
@@ -468,8 +468,6 @@ jobs:
             {"type": "object", "additionalProperties": false, "required": ["version", "reviewed_sha", "completion_status", "summary", "findings"], "properties": {"version": {"type": "integer", "enum": [1]}, "reviewed_sha": {"type": "string"}, "completion_status": {"type": "string", "enum": ["complete", "incomplete"]}, "summary": {"type": "string"}, "findings": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["priority", "title", "body", "path", "side", "start_line", "end_line"], "properties": {"priority": {"type": "string", "enum": ["P0", "P1", "P2"]}, "title": {"type": "string"}, "body": {"type": "string"}, "path": {"type": "string"}, "side": {"type": "string", "enum": ["LEFT", "RIGHT"]}, "start_line": {"type": "integer"}, "end_line": {"type": "integer"}}}}}}
           model: ${{ env.REVIEW_MODEL }}
           effort: ${{ env.REVIEW_EFFORT }}
-          # 0.169.0 falls back to 10,000 bytes for Sol 6.2 behind the Responses proxy.
-          codex-args: ${{ env.REVIEW_MODEL == 'gpt-6.2-sol' && '--config tool_output_token_limit=10000' || '' }}
           # Pin the CLI independently of the action.
           codex-version: ${{ env.CODEX_VERSION }}
           codex-home: .github/codex/home
@@ -642,12 +640,8 @@ jobs:
           git worktree add --detach "$RUNNER_TEMP/native-review" "$REVIEW_HEAD"
           ARGS=(--base "$REVIEW_BASE")
           [ "$REVIEW_MODE" = "commit" ] && ARGS=(--commit "$REVIEW_HEAD")
-          MODEL_ARGS=(--config "model_reasoning_effort=\"$REVIEW_EFFORT\"")
-          if [[ "$REVIEW_MODEL" == gpt-6.2-sol ]]; then
-            MODEL_ARGS+=(--config tool_output_token_limit=10000)
-          fi
           codex exec --cd "$RUNNER_TEMP/native-review" --model "$REVIEW_MODEL" \
-            "${MODEL_ARGS[@]}" --sandbox read-only \
+            --config "model_reasoning_effort=\"$REVIEW_EFFORT\"" --sandbox read-only \
             --json --output-last-message "$GITHUB_WORKSPACE/.github/codex/output/native-review.md" \
             review "${ARGS[@]}" > .github/codex/output/native-events.jsonl
 
@@ -733,7 +727,7 @@ jobs:
       REVIEW_PROFILE: ${{ needs.ai-review.outputs.review_profile }}
       REVIEW_MODEL: ${{ inputs.review_model || 'gpt-6.2-sol' }}
       REVIEW_EFFORT: ${{ inputs.review_effort || 'high' }}
-      CODEX_VERSION: ${{ inputs.codex_version || '0.169.0' }}
+      CODEX_VERSION: ${{ inputs.codex_version || '0.170.0' }}
       EXPECTED_BOT_LOGIN: ${{ inputs.review_bot_login || 'jitsu-code-review[bot]' }}
       REVIEW_REPO: ${{ github.workspace }}/reviewed-repo
       REVIEW_FILE: ${{ github.workspace }}/review-artifact/review.json

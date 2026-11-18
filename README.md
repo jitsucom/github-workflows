@@ -181,7 +181,7 @@ These inputs are available through `workflow_call` and manual dispatch:
 | `review_model` | `gpt-6.2-sol` | Explicit model identifier |
 | `review_effort` | `high` | `low`, `medium`, `high`, `xhigh`, or `max`; model must support it |
 | `analysis_timeout_minutes` | `12` | Per-engine timeout; integer from 1 to 30 |
-| `codex_version` | `0.169.0` | Pinned stable CLI version; floating versions are rejected |
+| `codex_version` | `0.170.0` | Pinned stable CLI version; floating versions are rejected |
 | `incremental` | `true` | Set false to force a full comparison |
 | `review_bot_login` | `jitsu-code-review[bot]` | Trusted completion-marker author; must match the posting App |
 | `dry_run` | `false` | Validate/archive without posting or advancing coverage |
